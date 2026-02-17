@@ -58,7 +58,6 @@ export default function Copilot() {
   }, [])
 
   useEffect(() => {
-    // Use range that includes sample data (from 2025-01-01); backend falls back to longer lookback if empty
     const end = new Date().toISOString().slice(0, 10)
     api
       .copilotContext(90, { start_date: '2025-01-01', end_date: end })
@@ -133,7 +132,7 @@ export default function Copilot() {
     api
       .copilotAskStream(text, sessionId, {
         onData: (delta) => setStreamingContent((prev) => (prev ?? '') + delta),
-        onDone: (answer, sources, modelVersions) => {
+        onDone: (_answer, sources, modelVersions) => {
           setStreamingContent(null)
           setStreamingSources(sources ?? null)
           setStreamingModelVersions(modelVersions ?? null)
@@ -150,31 +149,29 @@ export default function Copilot() {
 
   return (
     <div className="flex h-full min-h-0 bg-surface-50">
-      {/* Sidebar: sessions (ChatGPT-style) */}
+      {/* Sessions sidebar */}
       <aside className="w-64 shrink-0 flex flex-col border-r border-surface-200 bg-white">
-        <div className="p-3 border-b border-surface-200">
+        <div className="p-4 border-b border-surface-200">
           <button
             type="button"
             onClick={startNewChat}
-            className="w-full flex items-center justify-center gap-2 rounded-lg bg-surface-900 text-white py-2.5 px-3 text-sm font-medium hover:bg-surface-800 transition-colors"
+            className="btn-primary w-full"
           >
-            <span aria-hidden>+</span>
+            <span aria-hidden className="mr-2">+</span>
             New chat
           </button>
         </div>
         <div className="flex-1 overflow-y-auto p-2">
-          <p className="text-xs font-medium text-surface-400 uppercase tracking-wide px-2 mb-2">
-            Recent
-          </p>
+          <p className="text-overline font-semibold text-surface-500 px-3 mb-2">Recent</p>
           {sessions.length === 0 && (
-            <p className="text-xs text-surface-400 px-2">No chats yet.</p>
+            <p className="text-caption text-surface-400 px-3">No chats yet.</p>
           )}
           {sessions.map((s) => (
             <button
               key={s.id}
               type="button"
               onClick={() => selectSession(s)}
-              className={`w-full text-left rounded-lg px-3 py-2.5 text-sm mb-0.5 flex flex-col gap-0.5 ${
+              className={`w-full text-left rounded-input px-3 py-2.5 text-body-md mb-0.5 flex flex-col gap-0.5 transition-colors ${
                 currentSessionId === s.id
                   ? 'bg-surface-100 text-surface-900 font-medium'
                   : 'text-surface-600 hover:bg-surface-50'
@@ -182,39 +179,39 @@ export default function Copilot() {
               title={s.title ?? `Session ${s.id}`}
             >
               <span className="truncate">{formatSessionTitle(s.title, s.id)}</span>
-              <span className="text-xs text-surface-400">{formatSessionDate(s.created_at)}</span>
+              <span className="text-caption text-surface-400">{formatSessionDate(s.created_at)}</span>
             </button>
           ))}
         </div>
         {context && (
-          <div className="p-3 border-t border-surface-200 bg-surface-50/50">
-            <p className="text-xs font-medium text-surface-500 mb-1">Data in scope</p>
-            <p className="text-xs text-surface-500">
-              {context.start_date} → {context.end_date} · ${context.total_spend?.toLocaleString(undefined, { maximumFractionDigits: 0 })} spend
+          <div className="p-3 border-t border-surface-200 bg-surface-50/80">
+            <p className="text-overline font-semibold text-surface-500 mb-1">Data in scope</p>
+            <p className="text-caption text-surface-600">
+              {context.start_date} → {context.end_date} · $
+              {context.total_spend?.toLocaleString(undefined, { maximumFractionDigits: 0 })} spend
             </p>
           </div>
         )}
       </aside>
 
-      {/* Main: messages + input */}
       <main className="flex-1 flex flex-col min-w-0">
         {error && (
-          <div className="mx-4 mt-3 p-3 bg-red-50 border border-red-200 rounded-lg text-red-800 text-sm">
+          <div className="mx-4 mt-3 card border-error-200 bg-error-50 p-4 text-error-800 text-body-md">
             {error}
           </div>
         )}
 
         <div className="flex-1 overflow-y-auto">
-          <div className="max-w-3xl mx-auto px-4 py-6">
+          <div className="max-w-3xl mx-auto px-4 py-8">
             {showSuggestions && (
               <div className="text-center py-12">
-                <h2 className="text-xl font-semibold text-surface-800 mb-1">HypeOn Copilot</h2>
-                <p className="text-surface-500 text-sm mb-8">
+                <h2 className="font-display text-display-sm font-semibold text-surface-900 mb-1">
+                  HypeOn Copilot
+                </h2>
+                <p className="text-body-md text-surface-500 mb-8">
                   Ask about your dashboard in plain language. Data is fetched when you ask.
                 </p>
-                <p className="text-xs font-medium text-surface-400 uppercase tracking-wide mb-3">
-                  Try asking
-                </p>
+                <p className="text-overline font-semibold text-surface-500 mb-3">Try asking</p>
                 <div className="flex flex-wrap justify-center gap-2">
                   {SUGGESTED_QUESTIONS.map((q) => (
                     <button
@@ -222,7 +219,7 @@ export default function Copilot() {
                       type="button"
                       onClick={() => ask(q)}
                       disabled={loading}
-                      className="rounded-full border border-surface-200 bg-white px-4 py-2 text-sm text-surface-700 hover:bg-surface-50 hover:border-surface-300 transition-colors disabled:opacity-50"
+                      className="btn-secondary rounded-full px-4 py-2.5"
                     >
                       {q}
                     </button>
@@ -239,16 +236,16 @@ export default function Copilot() {
                     className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}
                   >
                     <div
-                      className={`max-w-[85%] rounded-2xl px-4 py-3 ${
+                      className={`max-w-[85%] rounded-card px-4 py-3 ${
                         m.role === 'user'
                           ? 'bg-brand-600 text-white'
-                          : 'bg-white border border-surface-200 shadow-sm'
+                          : 'card py-4'
                       }`}
                     >
                       {m.role === 'user' ? (
-                        <p className="text-sm whitespace-pre-wrap">{m.content}</p>
+                        <p className="text-body-md whitespace-pre-wrap">{m.content}</p>
                       ) : (
-                        <div className="text-sm">
+                        <div className="text-body-md">
                           <CopilotMessageContent content={m.content} />
                         </div>
                       )}
@@ -258,8 +255,8 @@ export default function Copilot() {
 
                 {streamingContent != null && (
                   <div className="flex justify-start">
-                    <div className="max-w-[85%] rounded-2xl px-4 py-3 bg-white border border-surface-200 shadow-sm">
-                      <div className="text-sm">
+                    <div className="max-w-[85%] card px-4 py-3">
+                      <div className="text-body-md">
                         <CopilotMessageContent content={streamingContent} />
                         <span className="animate-pulse">▌</span>
                       </div>
@@ -269,7 +266,7 @@ export default function Copilot() {
 
                 {streamingSources != null && streamingSources.length > 0 && (
                   <div className="flex justify-start">
-                    <div className="max-w-[85%] text-xs text-surface-500 px-2">
+                    <div className="max-w-[85%] text-caption text-surface-500 px-2">
                       Based on: {streamingSources.join(', ')}
                       {streamingModelVersions &&
                         (streamingModelVersions.mta_version || streamingModelVersions.mmm_version) && (
@@ -288,7 +285,6 @@ export default function Copilot() {
           </div>
         </div>
 
-        {/* Input area (fixed at bottom) */}
         <div className="border-t border-surface-200 bg-white p-4">
           <div className="max-w-3xl mx-auto flex gap-3 items-end">
             <textarea
@@ -303,19 +299,19 @@ export default function Copilot() {
               }}
               placeholder="Ask anything about your dashboard..."
               rows={1}
-              className="flex-1 resize-none rounded-xl border border-surface-200 px-4 py-3 text-surface-900 placeholder:text-surface-400 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent min-h-[48px] max-h-32"
+              className="input-base flex-1 resize-none min-h-[48px] max-h-32 py-3"
               disabled={loading}
             />
             <button
               type="button"
               onClick={() => ask(input)}
               disabled={loading || !input.trim()}
-              className="shrink-0 rounded-xl bg-brand-600 text-white px-5 py-3 font-medium hover:bg-brand-700 disabled:opacity-50 disabled:pointer-events-none min-h-[48px]"
+              className="btn-primary shrink-0 min-h-[48px] px-5 py-3"
             >
               {loading ? '…' : 'Send'}
             </button>
           </div>
-          <p className="text-xs text-surface-400 text-center mt-2 max-w-3xl mx-auto">
+          <p className="text-caption text-surface-400 text-center mt-2 max-w-3xl mx-auto">
             Copilot uses your dashboard data and session context to answer follow-up questions.
           </p>
         </div>

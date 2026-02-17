@@ -1,6 +1,6 @@
-# HypeOn Product Engine
+# HypeOn Analytics
 
-Backend product intelligence, modeling, rules, and decision outputs for HypeOn Analytics v1. Data is assumed to be delivered as CSVs into `data/raw/` by another team. No frontend, no data-pipeline connectors, no synthetic data generator.
+Product intelligence for multi-channel ad attribution and MMM: Meta, Google, Bing, Pinterest ads; Shopify and WooCommerce orders. Three attribution approaches: **Click-ID**, **MTA** (fractional/Markov), and **MMM** (custom Ridge; Meridian/Robyn documented for future). Data is ingested from CSVs in `data/raw/` (dummy data or future pipeline output). API + web dashboard in one deploy.
 
 ## Setup
 
@@ -31,15 +31,15 @@ python -m alembic -c infra/migrations/alembic.ini upgrade head
 
 On macOS/Linux: `./scripts/setup_db.sh` (or set `DATABASE_URL` and run the `alembic` command above).
 
-## Sample data
+## Sample data (dummy pipeline)
 
-To generate 90 days of realistic sample data (Meta + Google campaigns, Shopify orders):
+To generate 90 days of realistic sample data (Meta, Google, Bing, Pinterest ads; Shopify and WooCommerce orders; ad clicks for click-ID attribution):
 
 ```bash
 python scripts/generate_sample_data.py
 ```
 
-Writes `data/raw/meta_ads.csv`, `google_ads.csv`, `shopify_orders.csv` (date range 2025-01-01 to 2025-03-31). Then run the pipeline (or use the Dashboard **Run pipeline** button).
+Writes to `data/raw/`: `meta_ads.csv`, `google_ads.csv`, `bing_ads.csv`, `pinterest_ads.csv`, `shopify_orders.csv`, `woocommerce_orders.csv`, `ad_clicks.csv` (date range 2025-01-01 to 2025-03-31). Then run the pipeline (or use the Dashboard **Run pipeline** button). See [design/ingest.md](design/ingest.md) for the CSV contract when you plug in the real pipeline.
 
 ## Run pipeline
 
@@ -57,15 +57,15 @@ This will:
 
 ## Run API
 
-**With Docker (Postgres + API):**
+**With Docker (Postgres + API + Web):**
 
 ```bash
-docker-compose -f infra/compose/docker-compose.yml up --build
+docker compose -f infra/compose/docker-compose.yml up --build
 ```
 
-Then open http://localhost:8000/docs.
+Serves the API at http://localhost:8000 and the web app at http://localhost:8000 (static frontend built into the image). API docs: http://localhost:8000/docs.
 
-**Local (uvicorn):**
+**Local (uvicorn + separate Vite dev server):**
 
 ```bash
 # If using Docker Postgres (port 5433):
@@ -94,6 +94,13 @@ uvicorn apps.api.src.app:app --reload --host 0.0.0.0 --port 8000
 pytest packages apps tests -v
 ```
 
+## Production
+
+- **One-command run:** `docker compose -f infra/compose/docker-compose.yml up --build`. Ensure `data/raw/` is mounted (e.g. volume in compose) if you use file-based ingest.
+- **Environment:** Copy `.env.example` to `.env` and set at least `DATABASE_URL`. Optional: `API_KEY` (enforces X-API-Key or Authorization: Bearer), `CORS_ORIGINS`, `LOG_LEVEL`, `PIPELINE_RUN_INTERVAL_MINUTES` (scheduled runs), `DATA_RAW_DIR`. Do not commit `.env`.
+- **Migrations:** Run before first start: `python -m alembic -c infra/migrations/alembic.ini upgrade head` (with `DATABASE_URL` and `PYTHONPATH=.` set).
+- **When the real pipeline is ready:** Point `DATA_RAW_DIR` at the directory where your pipeline writes the same CSV filenames/schemas (see [design/ingest.md](design/ingest.md)), or replace the CSV loaders in `packages/shared/src/ingest.py` with your connector (S3, GCS, API). Attribution and MMM consume the same raw tables.
+
 ## Architecture
 
-See [design/arch.md](design/arch.md) for a one-page design and data flow.
+See [design/arch.md](design/arch.md) for a one-page design and data flow. [design/mmm.md](design/mmm.md) for MMM and future Meridian/Robyn.

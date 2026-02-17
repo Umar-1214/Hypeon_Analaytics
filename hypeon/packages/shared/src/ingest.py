@@ -8,10 +8,14 @@ from sqlmodel import Session, select
 
 from packages.shared.src.models import (
     IngestAudit,
+    RawAdClicks,
+    RawBingAds,
     RawGoogleAds,
     RawMetaAds,
+    RawPinterestAds,
     RawShopifyOrders,
     RawShopifyTransactions,
+    RawWooCommerceOrders,
 )
 
 
@@ -91,6 +95,78 @@ def load_google_ads(session: Session, csv_path: Optional[Path] = None) -> int:
     return count
 
 
+def load_bing_ads(session: Session, csv_path: Optional[Path] = None) -> int:
+    """Load or upsert raw_bing_ads from CSV."""
+    path = csv_path or _raw_dir() / "bing_ads.csv"
+    if not path.exists():
+        return 0
+    df = pd.read_csv(path)
+    df["date"] = pd.to_datetime(df["date"]).dt.date
+    count = 0
+    for _, row in df.iterrows():
+        existing = session.exec(
+            select(RawBingAds).where(
+                RawBingAds.date == row["date"],
+                RawBingAds.campaign_id == str(row["campaign_id"]),
+            )
+        ).first()
+        if existing:
+            existing.campaign_name = row.get("campaign_name")
+            existing.spend = float(row.get("spend", 0))
+            existing.impressions = int(row["impressions"]) if pd.notna(row.get("impressions")) else None
+            existing.clicks = int(row["clicks"]) if pd.notna(row.get("clicks")) else None
+        else:
+            session.add(
+                RawBingAds(
+                    date=row["date"],
+                    campaign_id=str(row["campaign_id"]),
+                    campaign_name=row.get("campaign_name"),
+                    spend=float(row.get("spend", 0)),
+                    impressions=int(row["impressions"]) if pd.notna(row.get("impressions")) else None,
+                    clicks=int(row["clicks"]) if pd.notna(row.get("clicks")) else None,
+                )
+            )
+        count += 1
+    session.commit()
+    return count
+
+
+def load_pinterest_ads(session: Session, csv_path: Optional[Path] = None) -> int:
+    """Load or upsert raw_pinterest_ads from CSV."""
+    path = csv_path or _raw_dir() / "pinterest_ads.csv"
+    if not path.exists():
+        return 0
+    df = pd.read_csv(path)
+    df["date"] = pd.to_datetime(df["date"]).dt.date
+    count = 0
+    for _, row in df.iterrows():
+        existing = session.exec(
+            select(RawPinterestAds).where(
+                RawPinterestAds.date == row["date"],
+                RawPinterestAds.campaign_id == str(row["campaign_id"]),
+            )
+        ).first()
+        if existing:
+            existing.campaign_name = row.get("campaign_name")
+            existing.spend = float(row.get("spend", 0))
+            existing.impressions = int(row["impressions"]) if pd.notna(row.get("impressions")) else None
+            existing.clicks = int(row["clicks"]) if pd.notna(row.get("clicks")) else None
+        else:
+            session.add(
+                RawPinterestAds(
+                    date=row["date"],
+                    campaign_id=str(row["campaign_id"]),
+                    campaign_name=row.get("campaign_name"),
+                    spend=float(row.get("spend", 0)),
+                    impressions=int(row["impressions"]) if pd.notna(row.get("impressions")) else None,
+                    clicks=int(row["clicks"]) if pd.notna(row.get("clicks")) else None,
+                )
+            )
+        count += 1
+    session.commit()
+    return count
+
+
 def _safe_float(x, default=0.0):
     try:
         return float(x) if x is not None and pd.notna(x) else default
@@ -129,6 +205,10 @@ def load_shopify_orders(session: Session, csv_path: Optional[Path] = None) -> in
             existing.customer_id = int(row["customer_id"]) if pd.notna(row.get("customer_id")) and str(row.get("customer_id")).isdigit() else existing.customer_id
             existing.is_test = bool(row.get("is_test", False)) if pd.notna(row.get("is_test")) else existing.is_test
             existing.net_revenue = _safe_float(row.get("net_revenue")) or total_price
+            existing.click_id = str(row["click_id"]) if pd.notna(row.get("click_id")) and str(row.get("click_id")).strip() else existing.click_id
+            existing.utm_source = str(row["utm_source"]) if pd.notna(row.get("utm_source")) else existing.utm_source
+            existing.utm_medium = str(row["utm_medium"]) if pd.notna(row.get("utm_medium")) else existing.utm_medium
+            existing.utm_campaign = str(row["utm_campaign"]) if pd.notna(row.get("utm_campaign")) else existing.utm_campaign
         else:
             session.add(
                 RawShopifyOrders(
@@ -150,6 +230,10 @@ def load_shopify_orders(session: Session, csv_path: Optional[Path] = None) -> in
                     customer_id=int(row["customer_id"]) if pd.notna(row.get("customer_id")) and str(row.get("customer_id")).replace("-", "").isdigit() else None,
                     is_test=bool(row.get("is_test", False)) if pd.notna(row.get("is_test")) else False,
                     net_revenue=_safe_float(row.get("net_revenue")) if pd.notna(row.get("net_revenue")) else total_price,
+                    click_id=str(row["click_id"]) if pd.notna(row.get("click_id")) and str(row.get("click_id")).strip() else None,
+                    utm_source=str(row["utm_source"]) if pd.notna(row.get("utm_source")) else None,
+                    utm_medium=str(row["utm_medium"]) if pd.notna(row.get("utm_medium")) else None,
+                    utm_campaign=str(row["utm_campaign"]) if pd.notna(row.get("utm_campaign")) else None,
                 )
             )
         count += 1
@@ -235,14 +319,89 @@ def reconcile_orders(session: Session) -> int:
     return reconciled
 
 
+def load_woocommerce_orders(session: Session, csv_path: Optional[Path] = None) -> int:
+    """Load or upsert raw_woocommerce_orders from CSV. Sets net_revenue to revenue if not provided."""
+    path = csv_path or _raw_dir() / "woocommerce_orders.csv"
+    if not path.exists():
+        return 0
+    df = pd.read_csv(path)
+    df["order_date"] = pd.to_datetime(df["order_date"]).dt.date
+    count = 0
+    for _, row in df.iterrows():
+        existing = session.exec(
+            select(RawWooCommerceOrders).where(RawWooCommerceOrders.order_id == str(row["order_id"]))
+        ).first()
+        rev = _safe_float(row.get("revenue", 0))
+        net = _safe_float(row.get("net_revenue")) if pd.notna(row.get("net_revenue")) else rev
+        if existing:
+            existing.order_date = row["order_date"]
+            existing.revenue = rev
+            existing.is_new_customer = (
+                bool(row["is_new_customer"]) if pd.notna(row.get("is_new_customer")) else None
+            )
+            existing.name = str(row["name"]) if pd.notna(row.get("name")) else existing.name
+            existing.net_revenue = net
+            existing.click_id = str(row["click_id"]) if pd.notna(row.get("click_id")) and str(row.get("click_id")).strip() else existing.click_id
+            existing.utm_source = str(row["utm_source"]) if pd.notna(row.get("utm_source")) else existing.utm_source
+            existing.utm_medium = str(row["utm_medium"]) if pd.notna(row.get("utm_medium")) else existing.utm_medium
+            existing.utm_campaign = str(row["utm_campaign"]) if pd.notna(row.get("utm_campaign")) else existing.utm_campaign
+        else:
+            session.add(
+                RawWooCommerceOrders(
+                    order_id=str(row["order_id"]),
+                    name=str(row["name"]) if pd.notna(row.get("name")) else None,
+                    order_date=row["order_date"],
+                    revenue=rev,
+                    is_new_customer=(
+                        bool(row["is_new_customer"]) if pd.notna(row.get("is_new_customer")) else None
+                    ),
+                    net_revenue=net,
+                    click_id=str(row["click_id"]) if pd.notna(row.get("click_id")) and str(row.get("click_id")).strip() else None,
+                    utm_source=str(row["utm_source"]) if pd.notna(row.get("utm_source")) else None,
+                    utm_medium=str(row["utm_medium"]) if pd.notna(row.get("utm_medium")) else None,
+                    utm_campaign=str(row["utm_campaign"]) if pd.notna(row.get("utm_campaign")) else None,
+                )
+            )
+        count += 1
+    session.commit()
+    return count
+
+
+def load_ad_clicks(session: Session, csv_path: Optional[Path] = None) -> int:
+    """Load raw_ad_clicks from CSV (click_id, date, campaign_id, campaign_name, channel). Replaces existing rows for same click_id."""
+    path = csv_path or _raw_dir() / "ad_clicks.csv"
+    if not path.exists():
+        return 0
+    df = pd.read_csv(path)
+    df["date"] = pd.to_datetime(df["date"]).dt.date
+    count = 0
+    for _, row in df.iterrows():
+        session.add(
+            RawAdClicks(
+                click_id=str(row["click_id"]),
+                date=row["date"],
+                campaign_id=str(row["campaign_id"]),
+                campaign_name=str(row["campaign_name"]) if pd.notna(row.get("campaign_name")) else None,
+                channel=str(row["channel"]).lower(),
+            )
+        )
+        count += 1
+    session.commit()
+    return count
+
+
 def run_ingest(session: Session, data_dir: Optional[Path] = None) -> dict:
-    """Run full ingest from data/raw (or data_dir): orders, transactions, then reconcile_orders. Returns counts."""
+    """Run full ingest from data/raw (or data_dir): ads, orders, transactions, then reconcile_orders. Returns counts."""
     if data_dir is not None:
         os.environ["DATA_RAW_DIR"] = str(data_dir)
     counts = {}
     counts["meta_ads"] = load_meta_ads(session)
     counts["google_ads"] = load_google_ads(session)
+    counts["bing_ads"] = load_bing_ads(session)
+    counts["pinterest_ads"] = load_pinterest_ads(session)
     counts["shopify_orders"] = load_shopify_orders(session)
     counts["shopify_transactions"] = load_shopify_transactions(session)
+    counts["woocommerce_orders"] = load_woocommerce_orders(session)
+    counts["ad_clicks"] = load_ad_clicks(session)
     counts["reconciled_orders"] = reconcile_orders(session)
     return counts

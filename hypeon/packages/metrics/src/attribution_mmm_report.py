@@ -7,7 +7,14 @@ from typing import Dict, List, Optional, Tuple
 
 from sqlmodel import Session, select
 
-from packages.shared.src.models import AttributionEvent, MMMResults, RawMetaAds, RawGoogleAds
+from packages.shared.src.models import (
+    AttributionEvent,
+    MMMResults,
+    RawMetaAds,
+    RawGoogleAds,
+    RawBingAds,
+    RawPinterestAds,
+)
 from packages.mmm.src.optimizer import _response_single_channel
 
 DEFAULT_ADSTOCK_HALF_LIFE = 7.0
@@ -45,6 +52,14 @@ def _spend_by_channel(session: Session, start_date: date, end_date: date) -> Dic
         select(RawGoogleAds).where(RawGoogleAds.date >= start_date, RawGoogleAds.date <= end_date)
     ).all():
         by_ch["google"] = by_ch.get("google", 0.0) + r.spend
+    for r in session.exec(
+        select(RawBingAds).where(RawBingAds.date >= start_date, RawBingAds.date <= end_date)
+    ).all():
+        by_ch["bing"] = by_ch.get("bing", 0.0) + r.spend
+    for r in session.exec(
+        select(RawPinterestAds).where(RawPinterestAds.date >= start_date, RawPinterestAds.date <= end_date)
+    ).all():
+        by_ch["pinterest"] = by_ch.get("pinterest", 0.0) + r.spend
     return by_ch
 
 

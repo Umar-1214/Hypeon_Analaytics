@@ -1,8 +1,9 @@
-"""Correlation ID and logging middleware. Do NOT wrap streaming or non-JSON responses."""
+"""Correlation ID, logging, and optional API key middleware."""
 import time
 import uuid
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 
 def get_correlation_id(request: Request) -> str:
@@ -29,3 +30,25 @@ class LoggingMiddleware(BaseHTTPMiddleware):
         # Structured log (no PII)
         print(f"[api] {request.method} {request.url.path} {response.status_code} correlation_id={correlation_id[:8] if correlation_id else '-'} duration_s={duration:.3f}")
         return response
+
+
+class ApiKeyMiddleware(BaseHTTPMiddleware):
+    """When API_KEY is set, require X-API-Key or Authorization: Bearer <key>; skip /health."""
+
+    async def dispatch(self, request: Request, call_next):
+        from .config import get_settings
+        settings = get_settings()
+        if not settings.api_key or not settings.api_key.strip():
+            return await call_next(request)
+        path = request.url.path.rstrip("/") or "/"
+        if path == "/health":
+            return await call_next(request)
+        key = request.headers.get("X-API-Key") or None
+        if not key and request.headers.get("Authorization", "").startswith("Bearer "):
+            key = request.headers.get("Authorization", "").split(" ", 1)[1].strip()
+        if key != settings.api_key:
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Missing or invalid API key"},
+            )
+        return await call_next(request)

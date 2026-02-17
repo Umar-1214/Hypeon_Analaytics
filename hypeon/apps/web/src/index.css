@@ -2,6 +2,64 @@
 @tailwind components;
 @tailwind utilities;
 
-body {
-  @apply bg-surface-50 text-surface-900 font-sans antialiased;
+@layer base {
+  body {
+    @apply bg-surface-50 text-surface-900 font-sans antialiased;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  }
+  /* Enterprise-grade focus rings */
+  *:focus-visible {
+    @apply outline-none ring-2 ring-brand-500 ring-offset-2 ring-offset-white;
+  }
+  /* Refined selection */
+  ::selection {
+    @apply bg-brand-100 text-brand-900;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-white rounded-card border border-surface-200 shadow-card;
+  }
+  .card-hover {
+    @apply card transition-shadow duration-200 hover:shadow-card-hover;
+  }
+  .input-base {
+    @apply w-full rounded-input border border-surface-200 bg-white px-3 py-2 text-body-md text-surface-900 placeholder:text-surface-400 focus:border-brand-500 focus:ring-1 focus:ring-brand-500;
+  }
+  .btn-primary {
+    @apply inline-flex items-center justify-center rounded-input bg-brand-600 px-4 py-2.5 text-body-md font-medium text-white shadow-card transition-colors hover:bg-brand-700 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60;
+  }
+  .btn-secondary {
+    @apply inline-flex items-center justify-center rounded-input border border-surface-200 bg-white px-4 py-2.5 text-body-md font-medium text-surface-700 shadow-sm transition-colors hover:bg-surface-50 hover:border-surface-300 focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-60;
+  }
+  .page-title {
+    @apply font-display text-display-md font-semibold text-surface-900 tracking-tight;
+  }
+  .page-subtitle {
+    @apply text-body-md text-surface-500 mt-0.5;
+  }
+  .kpi-label {
+    @apply text-overline font-medium uppercase tracking-wider text-surface-500;
+  }
+  .kpi-value {
+    @apply font-display text-display-md font-semibold text-surface-900 mt-1 tabular-nums;
+  }
+  .table-header {
+    @apply border-b border-surface-200 bg-surface-50/80 text-left text-overline font-semibold uppercase tracking-wider text-surface-600;
+  }
+  .table-cell {
+    @apply border-b border-surface-100 py-3 px-4 text-body-md text-surface-800;
+  }
+  .table-row-hover {
+    @apply transition-colors hover:bg-surface-50/80;
+  }
+}
+
+/* Prose in Copilot / markdown */
+.copilot-markdown {
+  @apply text-surface-800;
+}
+.copilot-markdown h1, .copilot-markdown h2, .copilot-markdown h3 {
+  @apply font-display font-semibold text-surface-900;
 }

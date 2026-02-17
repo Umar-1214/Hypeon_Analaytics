@@ -1,4 +1,5 @@
 """FastAPI app: health, metrics, decisions, POST /run pipeline, MMM status/results, copilot."""
+import os
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -10,6 +11,12 @@ for _env_dir in [_app_dir.parent.parent.parent.parent, _app_dir.parent.parent.pa
     if _env_file.exists():
         load_dotenv(_env_file)
         break
+
+# Apply validated config to env so db/ingest and other consumers see it
+from .config import get_settings
+_settings = get_settings()
+os.environ.setdefault("DATABASE_URL", _settings.database_url)
+os.environ.setdefault("DATA_RAW_DIR", _settings.data_raw_dir)
 
 import json
 
@@ -74,24 +81,56 @@ _last_mmm_diagnostics: dict = {}
 app = FastAPI(title="HypeOn Product Engine API", version="1.0.0")
 
 
+def _notify_pipeline_finished(run_id: str) -> None:
+    """Notify SSE subscribers that a pipeline run finished."""
+    loop = getattr(app.state, "event_loop", None)
+    subs = getattr(app.state, "pipeline_subscribers", [])
+    if loop and subs:
+        msg = {"event": "pipeline_finished", "run_id": run_id}
+        for q in subs:
+            try:
+                loop.call_soon_threadsafe(q.put_nowait, msg)
+            except Exception:
+                pass
+
+
 @app.on_event("startup")
 def ensure_copilot_tables():
-    """Create copilot_sessions and copilot_messages if missing (e.g. migration not run)."""
+    """Create copilot_sessions and copilot_messages if missing; init pipeline subscribers; start scheduler if configured."""
     engine = get_engine()
     for model in (CopilotSession, CopilotMessage):
         try:
             model.__table__.create(engine, checkfirst=True)
         except Exception:
             pass
+    app.state.pipeline_subscribers = []
+    interval = _settings.pipeline_run_interval_minutes
+    if interval and interval > 0:
+        from apscheduler.schedulers.background import BackgroundScheduler
+        from packages.shared.src.db import get_session
+
+        def scheduled_pipeline():
+            try:
+                with get_session() as session:
+                    run_id = _run_pipeline(session, None, _default_data_dir())
+                _notify_pipeline_finished(run_id)
+            except Exception:
+                pass
+
+        scheduler = BackgroundScheduler()
+        scheduler.add_job(scheduled_pipeline, "interval", minutes=interval)
+        scheduler.start()
+        app.state.scheduler = scheduler
 
 
-from .middleware import CorrelationIdMiddleware, LoggingMiddleware
+from .middleware import CorrelationIdMiddleware, LoggingMiddleware, ApiKeyMiddleware
 
 app.add_middleware(LoggingMiddleware)
 app.add_middleware(CorrelationIdMiddleware)
+app.add_middleware(ApiKeyMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173", "http://127.0.0.1:3000"],
+    allow_origins=_settings.cors_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -132,10 +171,26 @@ def _latest_mmm_coefficients(session: Session) -> dict:
     return {r.channel: r.coefficient for r in rows if r.run_id == rid}
 
 
+def _health_db_ok() -> bool:
+    """Lightweight DB readiness check (SELECT 1)."""
+    from sqlalchemy import text
+    try:
+        engine = get_engine()
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return True
+    except Exception:
+        return False
+
+
 @app.get("/health")
 def health():
-    """Liveness check."""
-    return {"status": "ok"}
+    """Liveness and readiness: includes DB check."""
+    db_ok = _health_db_ok()
+    status = "ok" if db_ok else "degraded"
+    if not db_ok:
+        return JSONResponse(content={"status": status, "database": "unavailable"}, status_code=503)
+    return {"status": status}
 
 
 def _ensure_date(d) -> str:
@@ -389,11 +444,46 @@ def _run_pipeline_v1(
 router_v1 = APIRouter(prefix="/api/v1", tags=["v1"])
 
 
+async def _stream_pipeline_events(request: Request):
+    """SSE stream: emit pipeline_finished when a run completes (for UI auto-refresh)."""
+    import asyncio
+    app.state.event_loop = asyncio.get_running_loop()
+    q = asyncio.Queue()
+    app.state.pipeline_subscribers.append(q)
+    try:
+        while True:
+            try:
+                msg = await asyncio.wait_for(q.get(), timeout=60.0)
+                yield f"data: {json.dumps(msg)}\n\n"
+            except asyncio.TimeoutError:
+                yield ": keepalive\n\n"
+    finally:
+        if q in app.state.pipeline_subscribers:
+            app.state.pipeline_subscribers.remove(q)
+
+
+@router_v1.get("/events/pipeline")
+async def v1_events_pipeline(request: Request):
+    """Server-Sent Events: pipeline_finished when a run completes. Use for dashboard auto-refresh."""
+    return StreamingResponse(
+        _stream_pipeline_events(request),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @router_v1.get("/engine/health")
 def v1_engine_health(request: Request):
-    """Liveness/readiness. Returns envelope."""
+    """Liveness/readiness. Returns envelope; 503 if DB unavailable."""
     meta = {"correlation_id": get_correlation_id(request)}
-    return JSONResponse(content=envelope_success({"status": "ok"}, meta=meta))
+    db_ok = _health_db_ok()
+    status = "ok" if db_ok else "degraded"
+    if not db_ok:
+        return JSONResponse(
+            status_code=503,
+            content=envelope_error(["database unavailable"], meta=meta),
+        )
+    return JSONResponse(content=envelope_success({"status": status}, meta=meta))
 
 
 @router_v1.post("/engine/run")
@@ -406,6 +496,7 @@ def v1_engine_run(
     try:
         data_dir = _default_data_dir()
         run_id = _run_pipeline_v1(session, seed, data_dir)
+        _notify_pipeline_finished(run_id)
         latest = get_latest_run()
         meta = {"correlation_id": get_correlation_id(request)}
         data = {
@@ -764,4 +855,12 @@ def trigger_run_sync(
     """Run pipeline synchronously; returns when done (for UI 'Run pipeline' button)."""
     data_dir = _default_data_dir()
     run_id = _run_pipeline(session, seed, data_dir)
+    _notify_pipeline_finished(run_id)
     return RunTriggerResponse(run_id=run_id, status="completed", message="Pipeline completed.")
+
+
+# ----- Serve frontend static at / when dist exists (production Docker); API routes take precedence -----
+_static_dir = Path(__file__).resolve().parent.parent.parent.parent / "apps" / "web" / "dist"
+if _static_dir.exists():
+    from fastapi.staticfiles import StaticFiles
+    app.mount("/", StaticFiles(directory=str(_static_dir), html=True), name="static")

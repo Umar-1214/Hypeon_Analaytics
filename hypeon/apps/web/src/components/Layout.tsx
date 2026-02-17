@@ -2,8 +2,8 @@ import { ReactNode } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 
 const navItems = [
-  { to: '/', label: 'Data & Model Health', description: 'Dashboard & health' },
-  { to: '/metrics', label: 'Metrics', description: 'Spend & revenue by channel' },
+  { to: '/', label: 'Overview', description: 'Data & model health' },
+  { to: '/metrics', label: 'Metrics', description: 'Spend & revenue' },
   { to: '/decisions', label: 'Decisions', description: 'Recommendations' },
   { to: '/report', label: 'Attribution vs MMM', description: 'Alignment report' },
   { to: '/copilot', label: 'Copilot', description: 'Ask in plain language', highlight: true },
@@ -14,38 +14,56 @@ export default function Layout({ children }: { children: ReactNode }) {
   const isCopilot = location.pathname === '/copilot'
 
   return (
-    <div className="min-h-screen flex flex-col md:flex-row">
-      <aside className="w-full md:w-56 lg:w-64 shrink-0 bg-white border-b md:border-b-0 md:border-r border-surface-200">
-        <div className="p-4 border-b border-surface-200">
-          <h1 className="font-display font-semibold text-lg text-surface-900">HypeOn</h1>
-          <p className="text-xs text-surface-500 mt-0.5">Analytics</p>
+    <div className="h-screen flex flex-col md:flex-row bg-surface-50 overflow-hidden">
+      {/* Fixed sidebar: does not scroll; only main content scrolls */}
+      <aside className="w-full md:w-60 lg:w-64 shrink-0 flex flex-col h-full bg-surface-900 text-surface-100 border-b md:border-b-0 md:border-r border-surface-800">
+        <div className="p-5 border-b border-surface-800 shrink-0">
+          <div className="flex items-baseline gap-2">
+            <span className="font-display font-semibold text-lg tracking-tight text-white">HypeOn</span>
+            <span className="text-overline font-medium text-surface-400 tracking-wider">Analytics</span>
+          </div>
+          <p className="text-caption text-surface-500 mt-1.5">Marketing attribution & optimization</p>
         </div>
-        <nav className="p-2 space-y-0.5">
+        <nav className="flex-1 min-h-0 p-3 space-y-0.5 overflow-y-auto">
+          <span className="px-3 py-1.5 text-overline font-semibold uppercase tracking-wider text-surface-500">
+            Navigation
+          </span>
           {navItems.map(({ to, label, description, highlight }) => (
             <NavLink
               key={to}
               to={to}
               className={({ isActive }) =>
-                `flex flex-col gap-0.5 px-3 py-2.5 rounded-lg text-sm transition-colors ${
+                `flex flex-col gap-0.5 px-3 py-2.5 rounded-input text-body-md transition-colors ${
                   highlight
-                    ? 'bg-brand-50 text-brand-700 hover:bg-brand-100'
+                    ? isActive
+                      ? 'bg-brand-600 text-white'
+                      : 'text-surface-300 hover:bg-surface-800 hover:text-white'
                     : isActive
-                    ? 'bg-surface-100 text-surface-900 font-medium'
-                    : 'text-surface-600 hover:bg-surface-50 hover:text-surface-800'
+                    ? 'bg-surface-800 text-white font-medium'
+                    : 'text-surface-400 hover:bg-surface-800/80 hover:text-surface-200'
                 }`
               }
             >
               <span className="font-medium">{label}</span>
-              <span className="text-xs opacity-80">{description}</span>
+              <span className="text-caption opacity-90">{description}</span>
             </NavLink>
           ))}
         </nav>
-        <div className="mt-auto p-3 border-t border-surface-200 text-xs text-surface-500">
-          Dashboard for specialists · Copilot for founders
+        <div className="p-3 border-t border-surface-800 shrink-0">
+          <p className="text-caption text-surface-500">
+            Enterprise-grade attribution · MTA & MMM
+          </p>
         </div>
       </aside>
-      <main className={`flex-1 flex flex-col min-h-0 ${isCopilot ? 'bg-surface-50 overflow-hidden' : 'bg-surface-50 overflow-auto'}`}>
-        {children}
+      {/* Main: fills from sidebar to right edge; only this area scrolls (non-Copilot) */}
+      <main className="flex-1 flex flex-col min-h-0 min-w-0 bg-surface-50 overflow-hidden">
+        {isCopilot ? (
+          children
+        ) : (
+          <div className="flex-1 min-h-0 min-w-0 w-full overflow-auto">
+            {children}
+          </div>
+        )}
       </main>
     </div>
   )

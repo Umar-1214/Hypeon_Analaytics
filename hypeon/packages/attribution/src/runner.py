@@ -1,33 +1,60 @@
-"""Attribution runner: read raw data, run fractional (or Markov if data available), write attribution_events."""
+"""Attribution runner: click-ID first, then fractional (or Markov) MTA for remaining orders."""
 from datetime import date, datetime
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 import pandas as pd
 from sqlmodel import Session, select
 
-from packages.shared.src.models import AttributionEvent, RawMetaAds, RawGoogleAds, RawShopifyOrders
+from packages.shared.src.models import (
+    AttributionEvent,
+    RawMetaAds,
+    RawGoogleAds,
+    RawBingAds,
+    RawPinterestAds,
+    RawShopifyOrders,
+    RawWooCommerceOrders,
+)
 from packages.attribution.src.allocator import fractional_allocate
 from packages.attribution.src.markov import markov_credits
 from packages.attribution.src.diagnostics import run_diagnostics
+from packages.attribution.src.click_id_attribution import run_click_id_attribution
 from packages.governance.src.versions import MTA_VERSION
 
 
-def _orders_df(session: Session, start: date, end: date) -> pd.DataFrame:
-    orders = session.exec(
+def _orders_df(
+    session: Session,
+    start: date,
+    end: date,
+    order_ids_to_exclude: Optional[Set[str]] = None,
+) -> pd.DataFrame:
+    """Orders from Shopify + WooCommerce in date range; optionally exclude order_ids (e.g. already click-ID attributed)."""
+    exclude = order_ids_to_exclude or set()
+    rows = []
+    for o in session.exec(
         select(RawShopifyOrders).where(
             RawShopifyOrders.order_date >= start,
             RawShopifyOrders.order_date <= end,
         )
-    ).all()
-    return pd.DataFrame(
-        [
-            {"order_id": o.order_id, "order_date": o.order_date, "revenue": o.revenue}
-            for o in orders
-        ]
-    )
+    ).all():
+        if o.order_id in exclude:
+            continue
+        rev = o.net_revenue if o.net_revenue is not None else o.revenue
+        rows.append({"order_id": o.order_id, "order_date": o.order_date, "revenue": float(rev)})
+    for o in session.exec(
+        select(RawWooCommerceOrders).where(
+            RawWooCommerceOrders.order_date >= start,
+            RawWooCommerceOrders.order_date <= end,
+        )
+    ).all():
+        if o.order_id in exclude:
+            continue
+        rev = o.net_revenue if o.net_revenue is not None else o.revenue
+        rows.append({"order_id": o.order_id, "order_date": o.order_date, "revenue": float(rev)})
+    return pd.DataFrame(rows)
 
 
 def _daily_spend_by_channel(session: Session, start: date, end: date) -> pd.DataFrame:
+    """Aggregate spend by (date, channel) for meta, google, bing, pinterest."""
     rows = []
     for rec in session.exec(
         select(RawMetaAds).where(RawMetaAds.date >= start, RawMetaAds.date <= end)
@@ -37,6 +64,14 @@ def _daily_spend_by_channel(session: Session, start: date, end: date) -> pd.Data
         select(RawGoogleAds).where(RawGoogleAds.date >= start, RawGoogleAds.date <= end)
     ).all():
         rows.append({"date": rec.date, "channel": "google", "spend": rec.spend})
+    for rec in session.exec(
+        select(RawBingAds).where(RawBingAds.date >= start, RawBingAds.date <= end)
+    ).all():
+        rows.append({"date": rec.date, "channel": "bing", "spend": rec.spend})
+    for rec in session.exec(
+        select(RawPinterestAds).where(RawPinterestAds.date >= start, RawPinterestAds.date <= end)
+    ).all():
+        rows.append({"date": rec.date, "channel": "pinterest", "spend": rec.spend})
     return pd.DataFrame(rows)
 
 
@@ -64,18 +99,21 @@ def _core_attribution_logic(
     channel_weights: Optional[Dict[str, float]] = None,
     session_sequences: Optional[List[List[str]]] = None,
     min_sequences_for_markov: int = 10,
+    order_ids_to_exclude: Optional[Set[str]] = None,
 ) -> Tuple[int, Dict[str, float], List[Tuple[str, date, str, float, float]]]:
     """
-    Shared attribution logic: load orders and spend, compute weights (Markov or fractional),
+    Shared attribution logic: load orders (excluding order_ids_to_exclude) and spend, compute weights (Markov or fractional),
     write attribution_events, return (number_written, allocations_dict, allocated).
-    allocations_dict: channel -> share of total attributed (0..1).
-    allocated: list of (order_id, event_date, channel, weight, allocated_revenue) for diagnostics.
     """
-    orders = _orders_df(session, start_date, end_date)
+    orders = _orders_df(session, start_date, end_date, order_ids_to_exclude=order_ids_to_exclude)
     if orders.empty:
         return 0, {}, []
     daily_spend = _daily_spend_by_channel(session, start_date, end_date)
-    channels = list(daily_spend["channel"].unique()) if not daily_spend.empty else ["meta", "google"]
+    channels = (
+        list(daily_spend["channel"].unique())
+        if not daily_spend.empty
+        else ["meta", "google", "bing", "pinterest"]
+    )
     weights = channel_weights
     if session_sequences is not None:
         markov_w = markov_credits(session_sequences, channels, min_sequences_for_markov)
@@ -115,17 +153,21 @@ def run_attribution(
     min_sequences_for_markov: int = 10,
 ) -> int:
     """
-    Run attribution and write to attribution_events. Uses Markov if session_sequences
-    is provided and passes min_sequences_for_markov; else fractional.
-    Returns number of attribution rows written.
+    Run attribution: first click-ID for orders with click_id, then fractional/Markov MTA for the rest.
+    Returns total number of attribution rows written.
     """
+    click_n, attributed = run_click_id_attribution(session, run_id, start_date, end_date)
     n_written, _, _ = _core_attribution_logic(
-        session, run_id, start_date, end_date,
+        session,
+        run_id,
+        start_date,
+        end_date,
         channel_weights=channel_weights,
         session_sequences=session_sequences,
         min_sequences_for_markov=min_sequences_for_markov,
+        order_ids_to_exclude=attributed,
     )
-    return n_written
+    return click_n + n_written
 
 
 def run_attribution_with_diagnostics(
@@ -139,16 +181,20 @@ def run_attribution_with_diagnostics(
     mta_version: Optional[str] = None,
 ) -> Tuple[int, Dict]:
     """
-    Run attribution via _core_attribution_logic, then run diagnostics and return
-    (n_written, {"run_id", "version", "timestamp", "allocations", "diagnostics", "confidence_score"}).
-    If session_sequences is None, builds synthetic sequences from the allocated list returned by core logic.
+    Run click-ID then MTA; run diagnostics on MTA allocations and return (n_written, diagnostics dict).
     """
+    click_n, attributed = run_click_id_attribution(session, run_id, start_date, end_date)
     n_written, allocations_dict, allocated = _core_attribution_logic(
-        session, run_id, start_date, end_date,
+        session,
+        run_id,
+        start_date,
+        end_date,
         channel_weights=channel_weights,
         session_sequences=session_sequences,
         min_sequences_for_markov=min_sequences_for_markov,
+        order_ids_to_exclude=attributed,
     )
+    n_written = click_n + n_written
     channels = list(allocations_dict.keys()) if allocations_dict else ["meta", "google"]
     sequences = session_sequences
     if sequences is None and allocated:

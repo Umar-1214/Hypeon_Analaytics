@@ -9,6 +9,8 @@ from packages.shared.src.models import (
     AttributionEvent,
     RawMetaAds,
     RawGoogleAds,
+    RawBingAds,
+    RawPinterestAds,
     UnifiedDailyMetrics,
 )
 
@@ -23,6 +25,14 @@ def _spend_by_date_channel(session: Session, start: date, end: date) -> pd.DataF
         select(RawGoogleAds).where(RawGoogleAds.date >= start, RawGoogleAds.date <= end)
     ).all():
         rows.append({"date": r.date, "channel": "google", "spend": r.spend})
+    for r in session.exec(
+        select(RawBingAds).where(RawBingAds.date >= start, RawBingAds.date <= end)
+    ).all():
+        rows.append({"date": r.date, "channel": "bing", "spend": r.spend})
+    for r in session.exec(
+        select(RawPinterestAds).where(RawPinterestAds.date >= start, RawPinterestAds.date <= end)
+    ).all():
+        rows.append({"date": r.date, "channel": "pinterest", "spend": r.spend})
     if not rows:
         return pd.DataFrame(columns=["date", "channel", "spend"])
     df = pd.DataFrame(rows)

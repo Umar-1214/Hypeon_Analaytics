@@ -38,6 +38,34 @@ class RawGoogleAds(SQLModel, table=True):
     created_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
 
 
+class RawBingAds(SQLModel, table=True):
+    """Raw Bing ads data; schema mirrors CSV."""
+
+    __tablename__ = "raw_bing_ads"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    date: date
+    campaign_id: str
+    campaign_name: Optional[str] = None
+    spend: float = 0.0
+    impressions: Optional[int] = None
+    clicks: Optional[int] = None
+    created_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
+
+
+class RawPinterestAds(SQLModel, table=True):
+    """Raw Pinterest ads data; schema mirrors CSV."""
+
+    __tablename__ = "raw_pinterest_ads"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    date: date
+    campaign_id: str
+    campaign_name: Optional[str] = None
+    spend: float = 0.0
+    impressions: Optional[int] = None
+    clicks: Optional[int] = None
+    created_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
+
+
 class RawShopifyOrders(SQLModel, table=True):
     """Raw Shopify orders; extended schema for real API (name, financial_status, net_revenue, etc.)."""
 
@@ -62,6 +90,10 @@ class RawShopifyOrders(SQLModel, table=True):
     customer_id: Optional[int] = None
     is_test: bool = False
     net_revenue: Optional[float] = None
+    click_id: Optional[str] = None  # gclid, fbclid, etc. for click-ID attribution
+    utm_source: Optional[str] = None
+    utm_medium: Optional[str] = None
+    utm_campaign: Optional[str] = None
 
 
 class RawShopifyTransactions(SQLModel, table=True):
@@ -78,6 +110,37 @@ class RawShopifyTransactions(SQLModel, table=True):
     gateway: Optional[str] = None
     parent_id: Optional[int] = None
     source_name: Optional[str] = None
+
+
+class RawWooCommerceOrders(SQLModel, table=True):
+    """Raw WooCommerce orders; same shape as Shopify for unified attribution/MMM."""
+
+    __tablename__ = "raw_woocommerce_orders"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    order_id: str
+    name: Optional[str] = None
+    order_date: date
+    revenue: float = 0.0
+    is_new_customer: Optional[bool] = None
+    created_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
+    net_revenue: Optional[float] = None
+    click_id: Optional[str] = None
+    utm_source: Optional[str] = None
+    utm_medium: Optional[str] = None
+    utm_campaign: Optional[str] = None
+
+
+class RawAdClicks(SQLModel, table=True):
+    """Ad clicks by click_id for click-ID attribution (gclid, fbclid, etc.)."""
+
+    __tablename__ = "raw_ad_clicks"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    click_id: str = Field(index=True)
+    date: date
+    campaign_id: str
+    campaign_name: Optional[str] = None
+    channel: str  # meta, google, bing, pinterest
+    created_at: Optional[datetime] = Field(default_factory=datetime.utcnow)
 
 
 class IngestAudit(SQLModel, table=True):
@@ -196,6 +259,21 @@ class CopilotMessage(SQLModel, table=True):
     role: str  # "user" | "assistant"
     content: str
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ----- Engine run metadata (persisted for readiness / history) -----
+
+
+class EngineRunMetadataRecord(SQLModel, table=True):
+    """Persisted engine run metadata (run_id, versions, timestamp)."""
+
+    __tablename__ = "engine_run_metadata"
+    id: Optional[int] = Field(default=None, primary_key=True)
+    run_id: str
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    mta_version: str = ""
+    mmm_version: str = ""
+    data_snapshot_id: str = ""
 
 
 # ----- Store config (minimal placeholder for rules) -----

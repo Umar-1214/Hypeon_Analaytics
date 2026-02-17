@@ -6,10 +6,20 @@ import numpy as np
 import pandas as pd
 from sqlmodel import Session, select
 
-from packages.shared.src.models import MMMResults, RawMetaAds, RawGoogleAds, RawShopifyOrders
+from packages.shared.src.models import (
+    MMMResults,
+    RawMetaAds,
+    RawGoogleAds,
+    RawBingAds,
+    RawPinterestAds,
+    RawShopifyOrders,
+    RawWooCommerceOrders,
+)
 from packages.mmm.src.transforms import adstock_transform, saturation_log
 from packages.mmm.src.model import fit_pipeline
 from packages.governance.src.versions import MMM_VERSION
+
+_DEFAULT_CHANNELS = ["meta", "google", "bing", "pinterest"]
 
 
 def _daily_spend_matrix(
@@ -18,7 +28,7 @@ def _daily_spend_matrix(
     end: date,
     channels: List[str],
 ) -> tuple[pd.DatetimeIndex, np.ndarray, np.ndarray]:
-    """Return (dates, spend_matrix, revenue vector)."""
+    """Return (dates, spend_matrix, revenue vector). Revenue = Shopify + WooCommerce."""
     dates = pd.date_range(start=start, end=end, freq="D")
     date_to_idx = {d.date(): i for i, d in enumerate(dates)}
     rev_by_date = {}
@@ -29,26 +39,37 @@ def _daily_spend_matrix(
         )
     ).all():
         od = o.order_date
-        rev_by_date[od] = rev_by_date.get(od, 0) + o.revenue
+        rev = o.net_revenue if o.net_revenue is not None else o.revenue
+        rev_by_date[od] = rev_by_date.get(od, 0) + float(rev)
+    for o in session.exec(
+        select(RawWooCommerceOrders).where(
+            RawWooCommerceOrders.order_date >= start,
+            RawWooCommerceOrders.order_date <= end,
+        )
+    ).all():
+        od = o.order_date
+        rev = o.net_revenue if o.net_revenue is not None else o.revenue
+        rev_by_date[od] = rev_by_date.get(od, 0) + float(rev)
     rev = np.array([rev_by_date.get(d.date(), 0.0) for d in dates], dtype=float)
     spend_matrix = np.zeros((len(dates), len(channels)))
+    channel_sources = [
+        ("meta", RawMetaAds),
+        ("google", RawGoogleAds),
+        ("bing", RawBingAds),
+        ("pinterest", RawPinterestAds),
+    ]
+    ch_to_model = {c: m for c, m in channel_sources}
     for j, ch in enumerate(channels):
-        if ch == "meta":
-            recs = session.exec(
-                select(RawMetaAds).where(RawMetaAds.date >= start, RawMetaAds.date <= end)
-            ).all()
-            for r in recs:
-                i = date_to_idx.get(r.date)
-                if i is not None:
-                    spend_matrix[i, j] += r.spend
-        elif ch == "google":
-            recs = session.exec(
-                select(RawGoogleAds).where(RawGoogleAds.date >= start, RawGoogleAds.date <= end)
-            ).all()
-            for r in recs:
-                i = date_to_idx.get(r.date)
-                if i is not None:
-                    spend_matrix[i, j] += r.spend
+        model = ch_to_model.get(ch)
+        if model is None:
+            continue
+        recs = session.exec(
+            select(model).where(model.date >= start, model.date <= end)
+        ).all()
+        for r in recs:
+            i = date_to_idx.get(r.date)
+            if i is not None:
+                spend_matrix[i, j] += r.spend
     return dates, spend_matrix, rev
 
 
@@ -69,7 +90,7 @@ def run_mmm(
     elasticities, bootstrap_ci, stability_index, confidence_score) for API use.
     """
     if channels is None:
-        channels = ["meta", "google"]
+        channels = _DEFAULT_CHANNELS.copy()
     dates, spend_matrix, rev = _daily_spend_matrix(session, start_date, end_date, channels)
     X_list = []
     for j in range(spend_matrix.shape[1]):

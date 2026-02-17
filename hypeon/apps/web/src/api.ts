@@ -195,6 +195,29 @@ export const apiV1 = {
   modelInfo: () => requestV1<ModelInfo>('/api/v1/model-info'),
 };
 
+/** Base URL for SSE (same origin or VITE_API_URL without /api suffix for EventSource) */
+const SSE_BASE = (() => {
+  const base = import.meta.env.VITE_API_URL || '';
+  if (base && base.startsWith('http')) return base.replace(/\/api\/?$/, '');
+  return '';
+})();
+
+/** Subscribe to pipeline_finished SSE events; callback when event received. Returns cleanup function. */
+export function subscribePipelineEvents(onPipelineFinished: (runId: string) => void): () => void {
+  const url = SSE_BASE ? `${SSE_BASE}/api/v1/events/pipeline` : '/api/v1/events/pipeline';
+  const es = new EventSource(url);
+  es.onmessage = (e) => {
+    try {
+      const data = JSON.parse(e.data) as { event?: string; run_id?: string };
+      if (data.event === 'pipeline_finished' && data.run_id) onPipelineFinished(data.run_id);
+    } catch {
+      // ignore
+    }
+  };
+  es.onerror = () => es.close();
+  return () => es.close();
+}
+
 export const api = {
   health: () => request<{ status: string }>('/health'),
   metrics: (params?: { start_date?: string; end_date?: string; channel?: string }) => {
