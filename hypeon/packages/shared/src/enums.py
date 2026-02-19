@@ -34,3 +34,9 @@ class DecisionStatus(str, Enum):
     PENDING = "pending"
     APPLIED = "applied"
     DISMISSED = "dismissed"
+    # Decision lifecycle (v2)
+    GENERATED = "generated"
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
+    EXECUTED = "executed"
+    VERIFIED = "verified"

@@ -174,14 +174,48 @@ class CopilotAskRequest(BaseModel):
     end_date: Optional[str] = None
 
 
+class CopilotRecommendation(BaseModel):
+    """One actionable recommendation from Copilot v2."""
+
+    action: str  # e.g. reduce_budget, scale_up, reallocate
+    entity: str  # e.g. channel/campaign name
+    reason: str
+    confidence: float = 0.0
+    expected_impact: Optional[str] = None
+    decision_id: Optional[str] = None
+
+
+class CopilotRiskItem(BaseModel):
+    """One risk item from Copilot v2."""
+
+    title: str
+    description: str
+    confidence: float = 0.0
+    entity_id: Optional[str] = None
+
+
+class CopilotOpportunityItem(BaseModel):
+    """One opportunity item from Copilot v2."""
+
+    title: str
+    description: str
+    confidence: float = 0.0
+    entity_id: Optional[str] = None
+    expected_impact: Optional[str] = None
+
+
 class CopilotAskResponse(BaseModel):
-    """Response for POST /copilot/ask."""
+    """Response for POST /copilot/ask. answer/sources kept for backward compatibility."""
 
     answer: str
     sources: List[str] = []
     model_versions_used: Optional[dict] = None  # { mta_version, mmm_version }
     session_id: Optional[int] = None
     message_id: Optional[int] = None
+    # Structured decision output (v2)
+    recommendations: List[CopilotRecommendation] = []
+    risks: List[CopilotRiskItem] = []
+    opportunities: List[CopilotOpportunityItem] = []
 
 
 class CopilotSessionListItem(BaseModel):
@@ -204,6 +238,12 @@ class CopilotMessageRow(BaseModel):
 class CopilotMessagesResponse(BaseModel):
     session_id: int
     messages: List[CopilotMessageRow]
+
+
+class DecisionStatusUpdateRequest(BaseModel):
+    """Body for POST /copilot/decision/{decision_id}/status."""
+
+    status: str
 
 
 # ----- Shared DTOs -----

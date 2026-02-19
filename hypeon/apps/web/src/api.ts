@@ -278,11 +278,12 @@ export const api = {
         end_date: dateRange?.end_date ?? null,
       }),
     }),
-  /** Stream answer via SSE; onData(delta), onDone(answer, sources, model_versions_used). Pass dateRange so answer uses same range as "Data in scope". */
+  /** Stream answer via SSE; onStatus(status), onData(delta), onDone(answer, sources, model_versions_used). Pass dateRange so answer uses same range as "Data in scope". */
   copilotAskStream: async (
     question: string,
     sessionId: number | undefined,
     callbacks: {
+      onStatus?: (status: string) => void;
       onData: (delta: string) => void;
       onDone: (answer: string, sources: string[], model_versions_used?: { mta_version?: string; mmm_version?: string }) => void;
       onError?: (err: string) => void;
@@ -324,6 +325,7 @@ export const api = {
         if (line.startsWith('data: ')) {
           try {
             const data = JSON.parse(line.slice(6)) as {
+              status?: string;
               delta?: string;
               done?: boolean;
               sources?: string[];
@@ -331,6 +333,7 @@ export const api = {
               model_versions_used?: { mta_version?: string; mmm_version?: string };
               session_id?: number;
             };
+            if (data.status) callbacks.onStatus?.(data.status);
             if (data.delta) callbacks.onData(data.delta);
             if (data.done && data.sources)
               callbacks.onDone(data.answer ?? '', data.sources, data.model_versions_used);

@@ -7,9 +7,22 @@ Model and run metadata (use only these versioned values; do not calculate metric
 - mmm_confidence_score: {{ mmm_confidence }}
 - alignment_score: {{ alignment_score }}
 
-Dashboard data (precomputed; cite only these numbers; when listing channels or decisions use a Markdown table):
+Precomputed decisions (explain and format these; do not recompute):
+<<DECISIONS>>
+{{ decisions_json }}
+
+<<RISKS>>
+{{ risks_json }}
+
+<<OPPORTUNITIES>>
+{{ opportunities_json }}
+
+<<CONFIDENCE>>
+{{ confidence_json }}
+
+Dashboard metrics (secondary context; cite only when explaining):
 {{ data_json }}
 
 {{ question }}
 
-Answer clearly and concisely. Use a Markdown table for any channel-level or list-style data (e.g. spend by channel, ROAS by channel, decisions). Then add 1–2 sentences of interpretation or next steps if relevant.
+Answer clearly and concisely. Use a Markdown table for any channel-level or list-style data. Then add 1–2 sentences of interpretation or next steps if relevant.

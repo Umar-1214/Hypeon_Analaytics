@@ -1,7 +1,8 @@
 """
 Copilot: answer natural-language questions using dashboard data.
 Designed for founders and non-technical users; uses metrics, decisions, MMM, and reports.
-Slot-based prompts: only versioned, precomputed context is injected (run_id, versions, stability, confidence).
+v2: Intent routing, decision aggregator, structured recommendations. Never fabricate metrics;
+only operate on prepared intelligence (DecisionStore, MMM, attribution report, unified metrics).
 """
 from datetime import date, timedelta
 import json
@@ -19,6 +20,9 @@ from packages.shared.src.models import (
 )
 from packages.shared.src.dates import parse_date_range
 from packages.metrics.src.attribution_mmm_report import build_attribution_mmm_report
+
+from .copilot_intent_router import CopilotIntent, classify_intent
+from .copilot_decision_engine import build_decision_context
 
 _COPILOT_PROMPTS_DIR = Path(__file__).resolve().parent / "copilot_prompts"
 _MAX_COPILOT_TOKENS = 512
@@ -39,10 +43,16 @@ def _build_prompt_from_templates(
     versioned_context: Optional[dict[str, Any]] = None,
     conversation_history: Optional[list[dict[str, str]]] = None,
 ) -> str:
-    """Build LLM prompt from templates; inject versioned context, dashboard data, and optional conversation history."""
+    """Build LLM prompt from templates; inject versioned context, decisions, and optional conversation history."""
     system_txt, slot_txt = _load_copilot_templates()
+    decisions = ctx.get("decisions")
+    decisions_json = json.dumps(decisions or {}, indent=2)
+    risks_json = json.dumps((decisions or {}).get("risk_campaigns", []), indent=2)
+    opportunities_json = json.dumps((decisions or {}).get("top_opportunities", []), indent=2)
+    confidence_json = json.dumps((decisions or {}).get("confidence_summary", {}), indent=2)
+    data_json = json.dumps(ctx, indent=2)
+
     if not slot_txt or versioned_context is None:
-        # Fallback: legacy single-block prompt
         hist = ""
         if conversation_history:
             hist = "\n\nConversation so far:\n" + "\n".join(
@@ -50,10 +60,9 @@ def _build_prompt_from_templates(
                 for m in conversation_history
             ) + "\n\n"
         return (
-            "You are an experienced marketing specialist advising a founder. Use ONLY the data below. "
-            "Be concise, data-driven, and actionable. Use specific numbers from the data. "
-            "Recommend clear next steps when relevant. Answer in 2–5 sentences unless more detail is needed.\n\n"
-            f"Data (dashboard metrics, decisions, MMM, attribution):\n{ctx}\n\n"
+            "You are an analytics decision assistant. All analytical reasoning has already been computed. "
+            "Use ONLY the data below. Never invent or compute metrics. Only explain, summarize, format, and prioritize.\n\n"
+            f"Data:\n{data_json}\n\n"
             f"{hist}Current question: {question}\n\nAnswer:"
         )
     run_id = versioned_context.get("run_id") or "—"
@@ -67,7 +76,6 @@ def _build_prompt_from_templates(
     mmm_conf_str = f"{mmm_conf:.2f}" if mmm_conf is not None else "—"
     align = versioned_context.get("alignment_score")
     align_str = f"{align:.2f}" if align is not None else "—"
-    data_json = json.dumps(ctx, indent=2)
     conversation_block = ""
     if conversation_history:
         conversation_block = "\n\nConversation so far:\n" + "\n".join(
@@ -83,6 +91,10 @@ def _build_prompt_from_templates(
         .replace("{{ mta_confidence }}", mta_conf_str)
         .replace("{{ mmm_confidence }}", mmm_conf_str)
         .replace("{{ alignment_score }}", align_str)
+        .replace("{{ decisions_json }}", decisions_json)
+        .replace("{{ risks_json }}", risks_json)
+        .replace("{{ opportunities_json }}", opportunities_json)
+        .replace("{{ confidence_json }}", confidence_json)
         .replace("{{ data_json }}", data_json)
         .replace("{{ question }}", conversation_block + current_question)
     )
@@ -185,6 +197,20 @@ def get_copilot_context(
 
     # Attribution vs MMM report
     report = build_attribution_mmm_report(session, start, end)
+    # Full decisions list for decision aggregator (v2)
+    decisions_list = [
+        {
+            "decision_id": d.decision_id,
+            "entity_type": d.entity_type,
+            "entity_id": d.entity_id,
+            "decision_type": d.decision_type,
+            "reason_code": d.reason_code,
+            "explanation_text": d.explanation_text,
+            "projected_impact": d.projected_impact,
+            "confidence_score": d.confidence_score,
+        }
+        for d in decisions
+    ]
     return {
         "start_date": start.isoformat(),
         "end_date": end.isoformat(),
@@ -208,6 +234,7 @@ def get_copilot_context(
             }
             for d in decisions[:5]
         ],
+        "decisions_list": decisions_list,
         "mmm_last_run_id": mmm_run_id,
         "mmm_coefficients": mmm_by_channel,
         "mmm_r2": round(r2, 4) if r2 is not None else None,
@@ -435,6 +462,53 @@ def _answer_from_templates(question: str, ctx: dict[str, Any]) -> tuple[str, lis
     ), ["General guidance"]
 
 
+def _decision_context_to_response_structured(decision_ctx: dict[str, Any]) -> tuple[list, list, list]:
+    """Convert decision aggregator output to recommendation/risk/opportunity dicts for API response."""
+    recommendations = []
+    for item in (decision_ctx.get("budget_waste") or [])[:10]:
+        action = "reduce_budget" if (item.get("decision_type") or "").lower() in ("scale_down", "pause_campaign", "pause_product") else "reallocate"
+        impact = item.get("projected_impact")
+        recommendations.append({
+            "action": action,
+            "entity": item.get("entity_id") or "",
+            "reason": item.get("reason") or "",
+            "confidence": item.get("confidence", 0),
+            "expected_impact": f"{impact:+.0%} efficiency" if impact is not None else None,
+            "decision_id": item.get("decision_id"),
+        })
+    for item in (decision_ctx.get("scale_candidates") or [])[:10]:
+        if (item.get("decision_type") or "").lower() == "scale_up":
+            pi = item.get("projected_impact")
+            recommendations.append({
+                "action": "scale_up",
+                "entity": item.get("entity_id") or "",
+                "reason": item.get("reason") or "",
+                "confidence": item.get("confidence", 0),
+                "expected_impact": f"+{int((pi or 0.1) * 100)}% efficiency" if pi is not None else None,
+                "decision_id": item.get("decision_id"),
+            })
+    risks = [
+        {
+            "title": r.get("entity_id") or "Risk",
+            "description": r.get("reason") or "",
+            "confidence": r.get("confidence", 0),
+            "entity_id": r.get("entity_id"),
+        }
+        for r in (decision_ctx.get("risk_campaigns") or [])[:10]
+    ]
+    opportunities = [
+        {
+            "title": o.get("entity_id") or "Opportunity",
+            "description": o.get("reason") or "",
+            "confidence": o.get("confidence", 0),
+            "entity_id": o.get("entity_id"),
+            "expected_impact": f"+{int((o.get('projected_impact') or 0.1) * 100)}% efficiency",
+        }
+        for o in (decision_ctx.get("top_opportunities") or [])[:10]
+    ]
+    return recommendations, risks, opportunities
+
+
 def generate_copilot_answer(
     session: Session,
     question: str,
@@ -442,18 +516,26 @@ def generate_copilot_answer(
     conversation_history: Optional[list[dict[str, str]]] = None,
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
-) -> tuple[str, list[str], dict[str, Any]]:
+) -> tuple[str, list[str], dict[str, Any], list[dict], list[dict], list[dict]]:
     """
-    Generate a plain-language answer from dashboard data.
-    Prefers Gemini if GEMINI_API_KEY is set, else OpenAI if OPENAI_API_KEY is set, else templates.
-    conversation_history: optional list of {"role": "user"|"assistant", "content": str} for follow-ups.
-    start_date/end_date: optional range so answer uses same window as "Data in scope".
-    Returns (answer_text, sources, model_versions_used).
+    Generate a plain-language answer from dashboard data. v2: intent routing, decision context.
+    Returns (answer_text, sources, model_versions_used, recommendations, risks, opportunities).
     """
     if start_date is not None and end_date is not None:
         ctx = get_copilot_context(session, start_date=start_date, end_date=end_date)
     else:
         ctx = get_copilot_context(session)
+    intent = classify_intent(question)
+    decision_ctx = build_decision_context(ctx, intent)
+    ctx["decisions"] = decision_ctx
+    ctx["mmm_summary"] = {
+        "run_id": ctx.get("mmm_last_run_id"),
+        "coefficients": ctx.get("mmm_coefficients"),
+        "r2": ctx.get("mmm_r2"),
+    }
+    ctx["attribution_summary"] = ctx.get("attribution_mmm_report")
+    ctx["confidence_scores"] = decision_ctx.get("confidence_summary", {})
+
     q = question.strip()
     use_llm = len(q) > 10
     model_versions_used = {}
@@ -466,19 +548,22 @@ def generate_copilot_answer(
     if use_llm and os.environ.get("GEMINI_API_KEY"):
         try:
             answer, sources = _answer_with_gemini(question, ctx, versioned_context, conversation_history)
-            return answer, sources, model_versions_used
+            recs, risks, opps = _decision_context_to_response_structured(decision_ctx)
+            return answer, sources, model_versions_used, recs, risks, opps
         except Exception:
             pass
 
     if use_llm and os.environ.get("OPENAI_API_KEY"):
         try:
             answer, sources = _answer_with_openai(question, ctx, versioned_context, conversation_history)
-            return answer, sources, model_versions_used
+            recs, risks, opps = _decision_context_to_response_structured(decision_ctx)
+            return answer, sources, model_versions_used, recs, risks, opps
         except Exception:
             pass
 
     answer, sources = _answer_from_templates(question, ctx)
-    return answer, sources, model_versions_used
+    recs, risks, opps = _decision_context_to_response_structured(decision_ctx)
+    return answer, sources, model_versions_used, recs, risks, opps
 
 
 def _answer_with_gemini(

@@ -42,10 +42,14 @@ from packages.shared.src.schemas import (
     CopilotContextResponse,
     CopilotMessageRow,
     CopilotMessagesResponse,
+    CopilotOpportunityItem,
+    CopilotRecommendation,
+    CopilotRiskItem,
     CopilotSessionListItem,
     CopilotSessionsResponse,
     DecisionRow,
     DecisionsResponse,
+    DecisionStatusUpdateRequest,
     MMMResultRow,
     MMMResultsResponse,
     MMMStatusResponse,
@@ -55,6 +59,7 @@ from packages.shared.src.schemas import (
     UnifiedMetricRow,
     UnifiedMetricsResponse,
 )
+from packages.shared.src.enums import DecisionStatus
 from packages.shared.src.dates import parse_date_range
 from packages.shared.src.ingest import run_ingest
 from packages.attribution.src.runner import run_attribution, run_attribution_with_diagnostics
@@ -72,7 +77,14 @@ from packages.product_engine.src.reconciliation import compute_reconciliation
 from packages.rules_engine.src.engine import enrich_decisions
 from .envelope import envelope_success, envelope_error
 from .middleware import get_correlation_id
-from .copilot import generate_copilot_answer, get_copilot_context, stream_answer_with_gemini
+from .copilot import (
+    build_decision_context,
+    classify_intent,
+    generate_copilot_answer,
+    get_copilot_context,
+    stream_answer_with_gemini,
+    _decision_context_to_response_structured,
+)
 
 # Last run diagnostics cache for /api/v1 (set only when pipeline runs via v1)
 _last_mta_diagnostics: dict = {}
@@ -743,7 +755,7 @@ def copilot_ask(
     versioned = _get_versioned_copilot_context(session)
     history = _copilot_session_history(session, sid)
     start_d, end_d = _parse_copilot_dates(body.start_date, body.end_date)
-    answer, sources, model_versions_used = generate_copilot_answer(
+    answer, sources, model_versions_used, recs, risks, opps = generate_copilot_answer(
         session, question, versioned, conversation_history=history, start_date=start_d, end_date=end_d
     )
     # Persist to session
@@ -767,6 +779,9 @@ def copilot_ask(
         model_versions_used=model_versions_used,
         session_id=sid,
         message_id=assistant_msg.id,
+        recommendations=[CopilotRecommendation(**r) for r in recs],
+        risks=[CopilotRiskItem(**r) for r in risks],
+        opportunities=[CopilotOpportunityItem(**o) for o in opps],
     )
 
 
@@ -775,26 +790,38 @@ def copilot_ask_stream(
     session: Session = Depends(get_session_fastapi),
     body: CopilotAskRequest = CopilotAskRequest(question=""),
 ):
-    """Stream answer as SSE. Uses session message history for follow-up questions. Dashboard data fetched when needed."""
+    """Stream answer as SSE. Emits status events (building_context, generating) then deltas. Uses session message history."""
     question = (body.question or "").strip() or "How are we doing?"
     sid = body.session_id if body.session_id is not None else _copilot_ensure_session(session, None)
     start_d, end_d = _parse_copilot_dates(body.start_date, body.end_date)
-    if start_d is not None and end_d is not None:
-        ctx = get_copilot_context(session, start_date=start_d, end_date=end_d)
-    else:
-        ctx = get_copilot_context(session, lookback_days=90)
-    versioned = _get_versioned_copilot_context(session)
-    history = _copilot_session_history(session, sid)
 
     def event_stream():
         full = []
         sources_list = []
         model_versions_used = None
+        recs, risks, opps = [], [], []
+        # Status: building context
+        yield f"data: {json.dumps({'status': 'building_context'})}\n\n"
+        if start_d is not None and end_d is not None:
+            ctx = get_copilot_context(session, start_date=start_d, end_date=end_d)
+        else:
+            ctx = get_copilot_context(session, lookback_days=90)
+        versioned = _get_versioned_copilot_context(session)
+        history = _copilot_session_history(session, sid)
+        intent = classify_intent(question)
+        decision_ctx = build_decision_context(ctx, intent)
+        ctx["decisions"] = decision_ctx
+        ctx["mmm_summary"] = {"run_id": ctx.get("mmm_last_run_id"), "coefficients": ctx.get("mmm_coefficients"), "r2": ctx.get("mmm_r2")}
+        ctx["attribution_summary"] = ctx.get("attribution_mmm_report")
+        ctx["confidence_scores"] = decision_ctx.get("confidence_summary", {})
+        recs, risks, opps = _decision_context_to_response_structured(decision_ctx)
         # Save user message
         user_msg = CopilotMessage(session_id=sid, role="user", content=question)
         session.add(user_msg)
         session.commit()
         session.refresh(user_msg)
+        # Status: generating
+        yield f"data: {json.dumps({'status': 'generating'})}\n\n"
         for delta, sources, mv in stream_answer_with_gemini(
             question, ctx, versioned, conversation_history=history
         ):
@@ -809,8 +836,10 @@ def copilot_ask_stream(
                 payload = {"done": True, "sources": sources, "answer": "".join(full)}
                 if model_versions_used is not None:
                     payload["model_versions_used"] = model_versions_used
+                payload["recommendations"] = recs
+                payload["risks"] = risks
+                payload["opportunities"] = opps
                 yield f"data: {json.dumps(payload)}\n\n"
-        # Persist assistant message
         answer_text = "".join(full)
         assistant_msg = CopilotMessage(session_id=sid, role="assistant", content=answer_text)
         session.add(assistant_msg)
@@ -827,6 +856,29 @@ def copilot_ask_stream(
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@app.post("/copilot/decision/{decision_id}/status")
+def copilot_decision_update_status(
+    decision_id: str,
+    body: DecisionStatusUpdateRequest,
+    session: Session = Depends(get_session_fastapi),
+):
+    """Update the status of a decision (e.g. accepted, rejected, executed, verified)."""
+    valid = [e.value for e in DecisionStatus]
+    if body.status not in valid:
+        return JSONResponse(
+            status_code=400,
+            content={"detail": f"status must be one of: {valid}"},
+        )
+    row = session.get(DecisionStore, decision_id)
+    if not row:
+        return JSONResponse(status_code=404, content={"detail": "Decision not found"})
+    row.status = body.status
+    session.add(row)
+    session.commit()
+    session.refresh(row)
+    return {"decision_id": row.decision_id, "status": row.status}
 
 
 def _default_data_dir() -> Path:

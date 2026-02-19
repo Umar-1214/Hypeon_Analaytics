@@ -41,6 +41,7 @@ export default function Copilot() {
     mta_version?: string
     mmm_version?: string
   } | null>(null)
+  const [streamingStatus, setStreamingStatus] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -80,6 +81,7 @@ export default function Copilot() {
     setMessages([])
     setInput('')
     setStreamingContent(null)
+    setStreamingStatus(null)
     setStreamingSources(null)
     setStreamingModelVersions(null)
     setError(null)
@@ -105,6 +107,7 @@ export default function Copilot() {
     setLoading(true)
     setError(null)
     setStreamingContent('')
+    setStreamingStatus(null)
     setStreamingSources(null)
     setStreamingModelVersions(null)
 
@@ -131,9 +134,14 @@ export default function Copilot() {
         : undefined
     api
       .copilotAskStream(text, sessionId, {
-        onData: (delta) => setStreamingContent((prev) => (prev ?? '') + delta),
+        onStatus: (status) => setStreamingStatus(status),
+        onData: (delta) => {
+          setStreamingStatus(null)
+          setStreamingContent((prev) => (prev ?? '') + delta)
+        },
         onDone: (_answer, sources, modelVersions) => {
           setStreamingContent(null)
+          setStreamingStatus(null)
           setStreamingSources(sources ?? null)
           setStreamingModelVersions(modelVersions ?? null)
           loadSessions()
@@ -203,6 +211,21 @@ export default function Copilot() {
 
         <div className="flex-1 overflow-y-auto">
           <div className="max-w-3xl mx-auto px-4 py-8">
+            {loading && streamingStatus && (
+              <div className="flex items-center gap-3 mb-4 px-3 py-2 rounded-lg bg-surface-100 border border-surface-200">
+                <span
+                  className="inline-block h-4 w-4 rounded-full border-2 border-primary-500 border-t-transparent animate-spin"
+                  aria-hidden
+                />
+                <span className="text-body-sm text-surface-700">
+                  {streamingStatus === 'building_context'
+                    ? 'Loading your data…'
+                    : streamingStatus === 'generating'
+                      ? 'Writing response…'
+                      : 'Working…'}
+                </span>
+              </div>
+            )}
             {showSuggestions && (
               <div className="text-center py-12">
                 <h2 className="font-display text-display-sm font-semibold text-surface-900 mb-1">
