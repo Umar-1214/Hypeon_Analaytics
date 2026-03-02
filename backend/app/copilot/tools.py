@@ -80,7 +80,7 @@ def _rank_tables_by_intent(tables: List[dict], intent: str) -> List[dict]:
         ds = (t.get("dataset") or "").strip().lower()
         table_name = (t.get("table_name") or "").lower()
         cols = t.get("columns") or []
-        col_names = [ (c.get("name") or "").lower() for c in cols if c.get("name") ]
+        col_names = [(c.get("name") or "").lower() for c in cols if c.get("name")]
         all_text = table_name + " " + " ".join(col_names)
         all_tokens = set(re.findall(r"\w+", all_text))
         match = len(tokens & all_tokens)
@@ -104,11 +104,16 @@ def discover_tables(intent: str, limit: int = 20) -> List[dict]:
     ranked = _rank_tables_by_intent(raw, intent)
     result = []
     for t in ranked[:limit]:
+        columns = []
+        for c in (t.get("columns") or []):
+            if not c.get("name"):
+                continue
+            columns.append({"name": c.get("name"), "data_type": c.get("data_type")})
         result.append({
             "project": t.get("project"),
             "dataset": t.get("dataset"),
             "table": t.get("table_name"),
-            "columns": [c.get("name") for c in (t.get("columns") or []) if c.get("name")],
+            "columns": columns,
             "last_updated": t.get("last_updated"),
             "sample_row": {},
         })

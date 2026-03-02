@@ -25,12 +25,14 @@ _SQL_GUIDE = """You are a BigQuery SQL expert for a read-only analytics warehous
 - Write a single SELECT statement (or WITH ... SELECT). No semicolon at the end.
 - Always add a LIMIT (e.g. LIMIT 500) to avoid huge result sets.
 - Prefer columns that match the question (e.g. revenue → value/item_revenue/revenue; product → item_id/product_id/sku; channel → channel/utm_source).
-- If a table has event_date or event_time, add a date filter (e.g. event_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY)).
+- Date filters: If the schema shows event_date or event_time with type STRING, the column is usually YYYYMMDD format. Use PARSE_DATE('%Y%m%d', event_date) for date comparison, or filter with: event_date >= FORMAT_DATE('%Y%m%d', DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY)). Do NOT use CAST(event_date AS DATE) or compare a STRING column directly to a DATE. If the column type is DATE or TIMESTAMP, you may use event_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY).
 - If a table has client_id, filter by client_id = {client_id} when the question is about this client.
+- For "days from first visit to first purchase" or "time lag" by channel: get first visit date (e.g. MIN(event_date) WHERE event_name = 'session_start') and first purchase date (e.g. MIN(event_date) WHERE event_name = 'purchase') per user; JOIN on user_pseudo_id only (do not require same utm_source on both); then attribute by the utm_source of the first visit. Use DATE_DIFF for days between dates.
 
 ## What NOT to do
 - Do NOT use INSERT, UPDATE, DELETE, MERGE, CREATE, DROP, ALTER, TRUNCATE, GRANT, REVOKE, EXPORT. Only SELECT is allowed.
 - Do NOT reference tables or columns that are not in the schema below.
+- Do NOT use CAST(string_date_column AS DATE) when the column holds YYYYMMDD strings; use PARSE_DATE('%Y%m%d', column) or FORMAT_DATE for comparison instead.
 - Do NOT output explanation or markdown—only the raw SQL query. No ``` wrapper unless you put the SQL inside it; if you use a code block, use ```sql ... ``` so it can be extracted.
 - Do NOT run multiple statements.
 
@@ -61,7 +63,15 @@ def _schema_block(candidates: List[dict]) -> str:
             continue
         lines.append(f"- Table: `{full}`")
         if cols:
-            lines.append(f"  Columns: {', '.join(str(x) for x in cols)}")
+            parts = []
+            for x in cols:
+                if isinstance(x, dict):
+                    name = x.get("name") or ""
+                    dtype = x.get("data_type")
+                    parts.append(f"{name} ({dtype})" if dtype else name)
+                else:
+                    parts.append(str(x))
+            lines.append(f"  Columns: {', '.join(parts)}")
         lines.append("")
     return "\n".join(lines)
 
@@ -263,7 +273,7 @@ def chat(
             previous_error = "LLM did not return a valid SQL query."
             logger.warning("Copilot LLM returned no SQL on attempt %s", attempt)
             continue
-        tables_tried.append(sql_used[:200])
+        tables_tried.append(sql_used[:500])
         try:
             out = run_bigquery_sql(sql_used, organization_id=organization_id, client_id=cid)
         except Exception as e:
@@ -275,7 +285,13 @@ def chat(
             previous_sql = sql_used
             previous_error = (out.get("error") or "Unknown error")[:300]
             continue
-        is_valid, _reason = validate_result(out, message, allow_empty=False)
+        # Allow empty result for time-lag / first-visit-to-purchase questions (query can be valid but return 0 rows)
+        msg_lower = (message or "").strip().lower()
+        allow_empty = any(
+            phrase in msg_lower
+            for phrase in ("days from first", "time lag", "first visit to first purchase")
+        )
+        is_valid, _reason = validate_result(out, message, allow_empty=allow_empty)
         if is_valid:
             valid_result = out
             if attempt > 1:
@@ -300,7 +316,8 @@ def chat(
         return {"answer": final_text, "data": rows, "text": final_text, "session_id": sid}
 
     copilot_metrics.increment("copilot.query_empty_results_total")
-    tables_msg = "; ".join(tables_tried[:3]) if tables_tried else "none"
+    # Show first query in full (up to 500 chars) so WHERE clause is visible for debugging
+    tables_msg = (tables_tried[0] + ("..." if len(tables_tried[0]) >= 500 else "")) if tables_tried else "none"
     logger.info("Copilot no valid result | intent=%s sql_tried=%s", plan.get("intent", ""), tables_tried)
     final_text = (
         f"I couldn't find relevant data for that question. Queries tried: {tables_msg}. "

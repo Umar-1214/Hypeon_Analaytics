@@ -367,7 +367,7 @@ def list_tables_for_discovery(
             tables_sql = f"""
             SELECT table_catalog, table_schema, table_name
             FROM `{project}.{dataset}.INFORMATION_SCHEMA.TABLES`
-            WHERE table_type = 'BASE TABLE'
+            WHERE table_type IN ('BASE TABLE', 'VIEW')
             """
             tbl_job = client.query(tables_sql)
             for row in tbl_job.result():
