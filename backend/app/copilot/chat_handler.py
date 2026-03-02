@@ -83,10 +83,12 @@ def _chat_v2(
     """
     Copilot V2: planner -> run_bigquery_sql (retry up to MAX_RETRIES) -> validate -> LLM answer.
     """
+    import time
     from .planner import analyze as planner_analyze, replan as planner_replan
     from ..llm_claude import is_claude_configured, chat_completion_with_tools as claude_tools_chat
     from ..llm_gemini import is_gemini_configured, chat_completion_with_tools as gemini_tools_chat
 
+    start_ms = time.perf_counter() * 1000
     max_retries = get_max_retries()
     copilot_metrics.increment("copilot.planner_attempts_total")
     plan = planner_analyze(message, context=None, client_id=client_id, organization_id=organization_id)
@@ -124,12 +126,16 @@ def _chat_v2(
 
     if valid_result is not None and sql_used:
         rows = valid_result.get("rows") or []
+        execution_time_ms = int((time.perf_counter() * 1000) - start_ms)
+        candidates_top3 = [c.get("table") for c in (plan.get("candidates") or [])[:3]]
         logger.info(
-            "Copilot V2 success | intent=%s attempts=%s sql_len=%d row_count=%d",
+            "Copilot V2 success | intent=%s candidates=%s sql_tried=%s chosen_sql=%s row_count=%d execution_time_ms=%d",
             plan.get("intent", ""),
-            attempt,
-            len(sql_used or ""),
+            candidates_top3,
+            tables_tried,
+            sql_used[:200] + "..." if len(sql_used or "") > 200 else sql_used,
             len(rows),
+            execution_time_ms,
         )
         data_preview = json.dumps(rows[:5], default=str)[:1500]
         answer_prompt = (
@@ -157,12 +163,15 @@ def _chat_v2(
         return {"answer": final_text, "data": rows, "text": final_text, "session_id": session_id}
 
     copilot_metrics.increment("copilot.query_empty_results_total")
+    execution_time_ms = int((time.perf_counter() * 1000) - start_ms)
+    candidates_top3 = [c.get("table") for c in (plan.get("candidates") or [])[:3]]
     tables_msg = "; ".join(tables_tried[:3]) if tables_tried else "none"
     logger.info(
-        "Copilot V2 no valid result | intent=%s attempts=%s tables_tried=%s",
+        "Copilot V2 no valid result | intent=%s candidates=%s sql_tried=%s chosen_sql=null row_count=0 execution_time_ms=%d",
         plan.get("intent", ""),
-        attempt,
-        tables_tried[:3],
+        candidates_top3,
+        tables_tried,
+        execution_time_ms,
     )
     final_text = (
         f"I couldn't find relevant rows for that question. Tables/queries I tried: {tables_msg}. "

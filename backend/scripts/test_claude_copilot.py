@@ -26,7 +26,7 @@ print("ANTHROPIC_API_KEY is set (masked).")
 
 # Minimal tools like Copilot uses
 from app.copilot.tools import COPILOT_TOOLS
-from app.copilot.chat_handler import SYSTEM_TEMPLATE
+from app.copilot.chat_handler import _build_system_template
 
 def test_claude_tools():
     from app.llm_claude import (
@@ -36,10 +36,11 @@ def test_claude_tools():
     if not is_claude_configured():
         print("is_claude_configured() returned False (ANTHROPIC_API_KEY not visible to llm_claude).")
         return False
+    system_template = _build_system_template(1)
     messages = [{"role": "user", "content": "Say hello in one short sentence. Do not use any tools."}]
     print("Calling chat_completion_with_tools (Claude with tools)...")
     try:
-        result = claude_tools_chat(messages, COPILOT_TOOLS, system=SYSTEM_TEMPLATE)
+        result = claude_tools_chat(messages, COPILOT_TOOLS, system=system_template)
         if not isinstance(result, dict):
             print("Unexpected result type:", type(result))
             return False

@@ -33,6 +33,7 @@ When `COPILOT_V2` is not set or false, the existing V1 flow (run_sql / run_sql_r
 ## IAM and Security
 
 - The service account used by the backend for BigQuery should have **BigQuery Data Viewer** (or dataset-level SELECT) on the project/datasets you want Copilot to query. No write privileges are required.
+- **Terraform/IaC**: If you manage GCP with Terraform or similar, grant the Copilot service account `roles/bigquery.dataViewer` at project or dataset level. Do not grant `roles/bigquery.admin` or write roles.
 - **Read-only enforcement**: All queries are validated server-side. The application rejects any statement containing: INSERT, UPDATE, DELETE, CREATE, DROP, ALTER, TRUNCATE, GRANT, REVOKE, MERGE, EXPORT. Do not rely solely on the LLM to avoid DML/DDL.
 - **Auditing**: Log executed SQL (and optionally table/schema) for audit. Redact PII in logs if required by policy.
 

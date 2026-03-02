@@ -81,3 +81,35 @@ def test_copilot_chat_uses_v2_when_flag_set(env_copilot_v2):
     mock_v2.assert_called_once()
     assert out.get("answer") == "Total views: 50."
     assert out.get("data") and out["data"][0].get("views") == 50
+
+
+def test_fallback_three_attempts_empty_then_invalid_schema_then_valid(env_copilot_v2):
+    """First query returns 0 rows, second returns invalid (e.g. negative count), third returns valid data; final answer uses third."""
+    call_count = 0
+
+    def mock_run_bigquery_sql(sql, organization_id, client_id, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return {"rows": [], "schema": [], "row_count": 0, "stats": {}, "error": None}
+        if call_count == 2:
+            return {"rows": [{"total_count": -1}], "schema": ["total_count"], "row_count": 1, "stats": {}, "error": None}
+        return {"rows": [{"views": 42}], "schema": ["views"], "row_count": 1, "stats": {}, "error": None}
+
+    with patch("backend.app.copilot.chat_handler.run_bigquery_sql", side_effect=mock_run_bigquery_sql):
+        with patch("backend.app.copilot.planner.analyze") as mock_analyze:
+            mock_analyze.return_value = {
+                "intent": "views count",
+                "candidates": [{"table": "p.d.t1"}, {"table": "p.d.t2"}, {"table": "p.d.t3"}],
+                "sql_templates": [
+                    "SELECT 0 AS views FROM `p.d.t1` LIMIT 500",
+                    "SELECT total_count FROM `p.d.t2` LIMIT 500",
+                    "SELECT 42 AS views FROM `p.d.t3` LIMIT 500",
+                ],
+            }
+            from backend.app.copilot.chat_handler import _chat_v2
+            store = MagicMock()
+            out = _chat_v2("org1", "What are the views?", "sess1", 1, store)
+    assert call_count == 3
+    assert out.get("data") and len(out["data"]) == 1 and out["data"][0].get("views") == 42
+    assert "42" in (out.get("answer") or "") or (out.get("data") and out["data"][0].get("views") == 42)

@@ -16,7 +16,7 @@ from backend.app.copilot_synthesizer import (
 
 def test_build_prompt_grounded():
     insight = {"insight_id": "abc", "summary": "Test", "evidence": [{"metric": "revenue", "value": 100, "baseline": 80, "period": "28d"}]}
-    prompt = build_prompt_grounded(insight, [], None)
+    prompt = build_prompt_grounded(insight, None)
     assert "abc" in prompt
     assert "revenue" in prompt or "Test" in prompt
 

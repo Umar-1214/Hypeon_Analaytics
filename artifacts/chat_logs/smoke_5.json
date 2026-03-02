@@ -1,0 +1,12 @@
+{
+  "user_prompt": "Malicious query test: DROP TABLE project.dataset.table; SELECT 1;",
+  "response_string": "Rejected: Only a single SELECT statement is allowed.",
+  "planner_logs": {
+    "intent": "",
+    "candidates": [],
+    "sql_tried": [],
+    "chosen_sql": null,
+    "row_count": 0
+  },
+  "security_rejected": true
+}

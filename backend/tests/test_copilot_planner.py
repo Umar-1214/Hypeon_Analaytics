@@ -120,3 +120,52 @@ def test_validator_rejects_negative_count():
     from backend.app.copilot.validator import validate
     ok, _ = validate({"rows": [{"total_count": -1}], "schema": ["total_count"], "error": None}, "What is the total count?")
     assert ok is False
+
+
+def test_run_bigquery_sql_readonly_rejects_insert():
+    """run_bigquery_sql_readonly must reject INSERT (returns error, no rows)."""
+    from backend.app.clients.bigquery import run_bigquery_sql_readonly
+    out = run_bigquery_sql_readonly("INSERT INTO t (a) VALUES (1)", client_id=1, organization_id="org")
+    assert out.get("error")
+    assert out.get("row_count", 0) == 0
+    err = (out.get("error") or "").lower()
+    assert "select" in err or "allowed" in err or "insert" in err
+
+
+def test_run_bigquery_sql_readonly_rejects_update_delete():
+    """run_bigquery_sql_readonly must reject UPDATE and DELETE (returns error)."""
+    from backend.app.clients.bigquery import run_bigquery_sql_readonly
+    for sql in ("UPDATE t SET x=1", "DELETE FROM t"):
+        out = run_bigquery_sql_readonly(sql, client_id=1, organization_id="org")
+        assert out.get("error"), sql
+        assert out.get("row_count", 0) == 0
+        err = (out.get("error") or "").lower()
+        assert "select" in err or "allowed" in err or "update" in err or "delete" in err
+
+
+def test_run_bigquery_sql_readonly_rejects_drop():
+    """run_bigquery_sql_readonly must reject DROP TABLE (malicious DDL)."""
+    from backend.app.clients.bigquery import run_bigquery_sql_readonly
+    out = run_bigquery_sql_readonly("DROP TABLE project.dataset.table; SELECT 1;", client_id=1, organization_id="org")
+    assert out.get("error")
+    assert out.get("row_count", 0) == 0
+
+
+def test_run_bigquery_sql_readonly_accepts_with_cte():
+    """run_bigquery_sql_readonly must accept WITH ... SELECT (read-only)."""
+    with patch("backend.app.clients.bigquery.get_client") as mock_get:
+        mock_job = MagicMock()
+        mock_job.schema = [MagicMock(name="x")]
+        mock_row = MagicMock()
+        mock_row.items.return_value = [("x", 1)]
+        mock_job.result.return_value = [mock_row]
+        mock_get.return_value.query.return_value = mock_job
+        from backend.app.clients.bigquery import run_bigquery_sql_readonly
+        out = run_bigquery_sql_readonly(
+            "WITH x AS (SELECT 1 AS x) SELECT * FROM x LIMIT 1",
+            client_id=1,
+            organization_id="org",
+        )
+    assert out.get("error") is None
+    assert len(out.get("rows") or []) == 1
+    assert out["rows"][0].get("x") == 1
