@@ -340,9 +340,10 @@ def test_run_readonly_query_raw_adds_limit(env_raw):
     assert "LIMIT 10" in call_sql
 
 
-# ----- execute_tool run_sql (tools.py) -----
+# ----- execute_tool (single-flow: discover_tables + run_bigquery_sql only; run_sql/run_sql_raw removed) -----
 
 
+@pytest.mark.skip(reason="run_sql removed; Copilot uses run_bigquery_sql only")
 def test_execute_tool_run_sql_empty_query():
     from backend.app.copilot.tools import execute_tool
     result = execute_tool("org", 1, "run_sql", {"query": ""})
@@ -351,6 +352,7 @@ def test_execute_tool_run_sql_empty_query():
     assert "Missing" in (data.get("error") or "")
 
 
+@pytest.mark.skip(reason="run_sql removed; Copilot uses run_bigquery_sql only")
 def test_execute_tool_run_sql_missing_query_key():
     from backend.app.copilot.tools import execute_tool
     result = execute_tool("org", 1, "run_sql", {})
@@ -359,6 +361,7 @@ def test_execute_tool_run_sql_missing_query_key():
     assert data.get("error") == "Missing query."
 
 
+@pytest.mark.skip(reason="run_sql removed; Copilot uses run_bigquery_sql only")
 def test_execute_tool_run_sql_delegates_to_run_readonly_query(env_bq):
     from backend.app.copilot.tools import execute_tool
     sql = "SELECT * FROM `test-proj.146568.ads_AccountBasicStats_4221201460` LIMIT 1"
@@ -374,6 +377,7 @@ def test_execute_tool_run_sql_delegates_to_run_readonly_query(env_bq):
     assert data["error"] is None
 
 
+@pytest.mark.skip(reason="run_sql removed; Copilot uses run_bigquery_sql only")
 def test_execute_tool_run_sql_serializes_date_and_nan(env_bq):
     from backend.app.copilot.tools import execute_tool
     with patch("backend.app.clients.bigquery.run_readonly_query") as mock_run:
@@ -390,6 +394,7 @@ def test_execute_tool_run_sql_serializes_date_and_nan(env_bq):
     assert data["rows"][0]["normal"] == 42
 
 
+@pytest.mark.skip(reason="run_sql removed; Copilot uses run_bigquery_sql only")
 def test_execute_tool_run_sql_propagates_error():
     from backend.app.copilot.tools import execute_tool
     with patch("backend.app.clients.bigquery.run_readonly_query") as mock_run:
@@ -401,13 +406,14 @@ def test_execute_tool_run_sql_propagates_error():
 
 
 def test_execute_tool_unknown_tool_returns_error():
-    """Only run_sql and run_sql_raw are supported; other tool names return error."""
+    """Unknown tool names (e.g. get_business_overview, run_sql) return error."""
     from backend.app.copilot.tools import execute_tool
     result = execute_tool("org", 1, "get_business_overview", {})
     data = json.loads(result)
     assert "Unknown tool" in (data.get("error") or "")
 
 
+@pytest.mark.skip(reason="run_sql_raw removed; Copilot uses run_bigquery_sql only")
 def test_execute_tool_run_sql_raw_empty_query():
     from backend.app.copilot.tools import execute_tool
     result = execute_tool("org", 1, "run_sql_raw", {"query": ""})
@@ -416,6 +422,7 @@ def test_execute_tool_run_sql_raw_empty_query():
     assert "Missing" in (data.get("error") or "")
 
 
+@pytest.mark.skip(reason="run_sql_raw removed; Copilot uses run_bigquery_sql only")
 def test_execute_tool_run_sql_raw_delegates_to_run_readonly_query_raw(env_raw):
     from backend.app.copilot.tools import execute_tool
     sql = "SELECT * FROM `test-proj.ga4_dataset.events_20250101` LIMIT 1"
@@ -590,57 +597,4 @@ def test_get_raw_schema_for_copilot_valid_file_contains_tables_and_schema():
         path.unlink(missing_ok=True)
 
 
-# ----- chat_handler _build_system_template -----
-
-
-def test_build_system_template_includes_client_id():
-    from backend.app.copilot.chat_handler import _build_system_template
-    t = _build_system_template(42)
-    assert "42" in t
-    assert "client_id" in t
-
-
-def test_build_system_template_includes_run_sql_and_schema():
-    from backend.app.copilot.chat_handler import _build_system_template
-    t = _build_system_template(1)
-    assert "run_sql" in t
-    assert "Knowledge base" in t or "fct_sessions" in t or "schema" in t
-
-
-def test_build_system_template_run_sql_and_run_sql_raw_no_dashboard():
-    """Copilot has run_sql and run_sql_raw; no layout/widgets/dashboard."""
-    from backend.app.copilot.chat_handler import _build_system_template
-    t = _build_system_template(1)
-    assert "run_sql" in t
-    assert "run_sql_raw" in t
-    assert "hypeon_marts" in t and "fct_sessions" in t
-    assert "get_business_overview" not in t
-    assert "widgets" not in t
-    assert "layout" not in t
-
-
-def test_build_system_template_includes_fallback_raw_section():
-    """System template includes Fallback raw data section (run_sql_raw)."""
-    from backend.app.copilot.chat_handler import _build_system_template
-    t = _build_system_template(1)
-    assert "Fallback" in t or "run_sql_raw" in t
-    assert "raw" in t.lower() or "run_sql_raw" in t
-
-
-def test_build_system_template_ft05b_google_uses_fct_sessions():
-    """Strict: FT05B + Google must use fct_sessions (view_item, item_id, utm_source)."""
-    from backend.app.copilot.chat_handler import _build_system_template
-    t = _build_system_template(1)
-    assert "fct_sessions" in t
-    assert "view_item" in t
-    assert "item_id" in t
-    assert "utm_source" in t or "google" in t.lower() or "FT05B" in t
-
-
-def test_build_system_template_facebook_unavailable_channel_message():
-    """Strict: When channel (e.g. Facebook) not in data, return clean message."""
-    from backend.app.copilot.chat_handler import _build_system_template
-    t = _build_system_template(1)
-    assert "not currently present" in t or "Available channels" in t
-    assert "google_ads" in t or "google" in t.lower()
-    assert "Do NOT mention staging" in t or "Do NOT reference" in t
+# ----- chat_handler: single-flow Copilot (planner + run_bigquery_sql). V1 _build_system_template removed. -----

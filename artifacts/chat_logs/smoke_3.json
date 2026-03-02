@@ -1,6 +1,6 @@
 {
   "user_prompt": "List top 5 SKUs by revenue last 30 days",
-  "response_string": "Found 1 row(s). SQL used: SELECT 0 AS views FROM `proj.ds.t1` LIMIT 500",
+  "response_string": "**Result (1 rows)**\n\n| views |\n|---|\n| 0 |",
   "planner_logs": {
     "intent": "ad spend",
     "candidates": [

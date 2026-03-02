@@ -1,5 +1,5 @@
 """
-Copilot tools: V1 run_sql/run_sql_raw; V2 discover_tables + run_bigquery_sql.
+Copilot tools: discover_tables (marts-first, synonym-aware) + run_bigquery_sql. Read-only.
 """
 from __future__ import annotations
 
@@ -8,55 +8,19 @@ import math
 import re
 from typing import Any, List, Optional
 
+from .concept_map import expand_intent_tokens, get_marts_datasets
+from .defaults import get_discover_tables_limit
+from .schema_cache import schema_cache_get, schema_cache_set
+
 COPILOT_TOOLS = [
     {
-        "name": "run_sql",
-        "description": "Run a single SELECT (or WITH ... SELECT) against hypeon_marts or hypeon_marts_ads only. Allowed tables: hypeon_marts.fct_sessions (events, item_id, utm_source), hypeon_marts_ads.fct_ad_spend (channel, cost, clicks). Use backtick-quoted names: `project.hypeon_marts.fct_sessions`, `project.hypeon_marts_ads.fct_ad_spend`. Returns JSON with 'rows' and optional 'error'. Use when marts have the data.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "A single SELECT SQL query. Only tables from the injected schema (hypeon_marts, hypeon_marts_ads) are allowed.",
-                },
-            },
-            "required": ["query"],
-            "additionalProperties": False,
-        },
-    },
-    {
-        "name": "run_sql_raw",
-        "description": "Run a read-only SELECT against raw GA4 or Ads tables when marts (run_sql) don't have the needed data or returned empty. Allowed: GA4 events_* tables, Ads ads_AccountBasicStats_* tables. Use backtick-quoted names. Always include LIMIT and, for GA4, filter by event_date. Returns same JSON shape as run_sql (rows, error).",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "A single SELECT SQL query. Only GA4 events_* and Ads ads_AccountBasicStats_* tables are allowed. Include LIMIT and date filter for GA4.",
-                },
-            },
-            "required": ["query"],
-            "additionalProperties": False,
-        },
-    },
-]
-
-# V2: schema discovery + unified SELECT tool (no dataset whitelist in code)
-COPILOT_TOOLS_V2 = [
-    {
         "name": "discover_tables",
-        "description": "Get a ranked list of candidate tables for a given question intent. Returns project, dataset, table, columns, last_updated, and optional sample_row. Use this to choose the best table(s) before writing SQL.",
+        "description": "Get candidate tables for a question (marts first, then raw). Returns project, dataset, table, columns. Use before writing SQL.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "intent": {
-                    "type": "string",
-                    "description": "Short intent phrase derived from the user question (e.g. 'views count item_id Facebook', 'ad spend by channel').",
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Max number of candidate tables to return (default 20).",
-                },
+                "intent": {"type": "string", "description": "Short intent from the user question."},
+                "limit": {"type": "integer", "description": "Max candidates (default 20)."},
             },
             "required": ["intent"],
             "additionalProperties": False,
@@ -64,18 +28,12 @@ COPILOT_TOOLS_V2 = [
     },
     {
         "name": "run_bigquery_sql",
-        "description": "Execute a single read-only SELECT (or WITH ... SELECT) against the data warehouse. No hard-coded dataset; access is enforced by IAM. Returns rows, schema, row_count, and stats. Do not use INSERT/UPDATE/DELETE/CREATE/DROP/ALTER/MERGE/EXPORT.",
+        "description": "Execute read-only SELECT. Returns rows, schema, row_count. No DML/DDL.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "A single SELECT SQL query. Use backtick-quoted table names: `project.dataset.table`.",
-                },
-                "dry_run": {
-                    "type": "boolean",
-                    "description": "If true, validate query without executing (default false).",
-                },
+                "query": {"type": "string", "description": "Single SELECT query."},
+                "dry_run": {"type": "boolean", "description": "Validate only (default false)."},
             },
             "required": ["query"],
             "additionalProperties": False,
@@ -85,7 +43,6 @@ COPILOT_TOOLS_V2 = [
 
 
 def _normalize_tool_arguments(arguments: Any) -> dict:
-    """Ensure tool arguments are always a dict (API may return a JSON string)."""
     if arguments is None:
         return {}
     if isinstance(arguments, dict):
@@ -100,8 +57,7 @@ def _normalize_tool_arguments(arguments: Any) -> dict:
 
 
 def _serialize_rows(rows: list[dict]) -> list[dict]:
-    """Serialize BigQuery row dicts for JSON (dates, NaN)."""
-    serialized = []
+    out = []
     for r in rows:
         row = {}
         for k, v in r.items():
@@ -111,38 +67,33 @@ def _serialize_rows(rows: list[dict]) -> list[dict]:
                 row[k] = None
             else:
                 row[k] = v
-        serialized.append(row)
-    return serialized
+        out.append(row)
+    return out
 
 
 def _rank_tables_by_intent(tables: List[dict], intent: str) -> List[dict]:
-    """Rank candidate tables by keyword overlap with intent (table name + column names)."""
-    intent_lower = (intent or "").strip().lower()
-    tokens = set(re.findall(r"\w+", intent_lower))
-    if not tokens:
-        return tables[:20]
-    scored: List[tuple[float, dict]] = []
+    """Rank by keyword + synonym overlap. Then sort marts first, then by score."""
+    tokens = expand_intent_tokens(intent)
+    marts = get_marts_datasets()
+    scored: List[tuple[float, int, dict]] = []  # (score, tier: 0=marts 1=raw, table)
     for t in tables:
+        ds = (t.get("dataset") or "").strip().lower()
         table_name = (t.get("table_name") or "").lower()
         cols = t.get("columns") or []
-        col_names = " ".join((c.get("name") or "").lower() for c in cols).split()
+        col_names = [ (c.get("name") or "").lower() for c in cols if c.get("name") ]
         all_text = table_name + " " + " ".join(col_names)
         all_tokens = set(re.findall(r"\w+", all_text))
         match = len(tokens & all_tokens)
         col_match = sum(1 for c in col_names if c in tokens)
         score = match + 0.5 * col_match
-        scored.append((score, t))
-    scored.sort(key=lambda x: -x[0])
-    return [t for _, t in scored]
+        tier = 0 if ds in marts else 1
+        scored.append((score, tier, t))
+    scored.sort(key=lambda x: (-x[0], x[1]))  # high score first, marts (0) before raw (1)
+    return [t for _, __, t in scored]
 
 
 def discover_tables(intent: str, limit: int = 20) -> List[dict]:
-    """
-    Return ranked candidate tables for the given intent. Uses schema cache; on miss
-    queries INFORMATION_SCHEMA and ranks by keyword match.
-    """
-    from .defaults import get_discover_tables_limit
-    from .schema_cache import schema_cache_get, schema_cache_set
+    """Ranked candidate tables (marts first, then raw). Synonym-aware. Cached."""
     from ..clients.bigquery import list_tables_for_discovery
 
     limit = min(limit or get_discover_tables_limit(), 50)
@@ -153,15 +104,14 @@ def discover_tables(intent: str, limit: int = 20) -> List[dict]:
     ranked = _rank_tables_by_intent(raw, intent)
     result = []
     for t in ranked[:limit]:
-        row = {
+        result.append({
             "project": t.get("project"),
             "dataset": t.get("dataset"),
             "table": t.get("table_name"),
             "columns": [c.get("name") for c in (t.get("columns") or []) if c.get("name")],
             "last_updated": t.get("last_updated"),
             "sample_row": {},
-        }
-        result.append(row)
+        })
     schema_cache_set(intent, result)
     return result
 
@@ -174,9 +124,7 @@ def run_bigquery_sql(
     max_rows: int = 500,
     timeout_sec: float = 20.0,
 ) -> dict:
-    """
-    Execute read-only BigQuery SQL. Returns dict with rows, schema, row_count, stats, error.
-    """
+    """Execute read-only BigQuery SQL. Returns rows, schema, row_count, stats, error."""
     from ..clients.bigquery import run_bigquery_sql_readonly
 
     out = run_bigquery_sql_readonly(
@@ -199,43 +147,9 @@ def execute_tool(
     tool_name: str,
     arguments: Optional[dict] = None,
 ) -> str:
-    """
-    Execute a Copilot tool: V1 run_sql/run_sql_raw; V2 discover_tables/run_bigquery_sql.
-    """
+    """Execute discover_tables or run_bigquery_sql."""
     args = _normalize_tool_arguments(arguments)
     cid = int(client_id) if client_id is not None else 1
-
-    if tool_name == "run_sql":
-        from ..clients.bigquery import run_readonly_query
-        query = (args.get("query") or "").strip()
-        if not query:
-            return json.dumps({"rows": [], "error": "Missing query."})
-        out = run_readonly_query(
-            sql=query,
-            client_id=cid,
-            organization_id=organization_id,
-            max_rows=500,
-            timeout_sec=15.0,
-        )
-        rows = out.get("rows") or []
-        serialized = _serialize_rows(rows)
-        return json.dumps({"rows": serialized, "error": out.get("error"), "row_count": len(serialized)})
-
-    if tool_name == "run_sql_raw":
-        from ..clients.bigquery import run_readonly_query_raw
-        query = (args.get("query") or "").strip()
-        if not query:
-            return json.dumps({"rows": [], "error": "Missing query."})
-        out = run_readonly_query_raw(
-            sql=query,
-            client_id=cid,
-            organization_id=organization_id,
-            max_rows=500,
-            timeout_sec=20.0,
-        )
-        rows = out.get("rows") or []
-        serialized = _serialize_rows(rows)
-        return json.dumps({"rows": serialized, "error": out.get("error"), "row_count": len(serialized)})
 
     if tool_name == "discover_tables":
         intent = (args.get("intent") or "").strip() or "analytics"
@@ -244,9 +158,8 @@ def execute_tool(
             try:
                 limit = min(50, max(1, int(limit)))
             except (TypeError, ValueError):
-                limit = 20
+                limit = get_discover_tables_limit()
         else:
-            from .defaults import get_discover_tables_limit
             limit = get_discover_tables_limit()
         candidates = discover_tables(intent, limit=limit)
         return json.dumps({"candidates": candidates})
@@ -256,12 +169,7 @@ def execute_tool(
         if not query:
             return json.dumps({"rows": [], "schema": [], "row_count": 0, "stats": {}, "error": "Missing query."})
         dry_run = bool(args.get("dry_run", False))
-        out = run_bigquery_sql(
-            sql=query,
-            organization_id=organization_id,
-            client_id=cid,
-            dry_run=dry_run,
-        )
+        out = run_bigquery_sql(query, organization_id=organization_id, client_id=cid, dry_run=dry_run)
         return json.dumps(out)
 
     return json.dumps({"error": f"Unknown tool: {tool_name}"})

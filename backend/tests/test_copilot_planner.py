@@ -1,5 +1,5 @@
 """
-Unit tests for Copilot V2 planner and discover_tables.
+Unit tests for Copilot planner, discover_tables (marts-first, synonym-aware), and run_bigquery_sql.
 """
 from __future__ import annotations
 
@@ -32,22 +32,23 @@ def test_planner_analyze_returns_intent_and_candidates():
         plan = analyze("views count FT05B facebook", client_id=1, organization_id="org1")
     assert "intent" in plan
     assert "candidates" in plan
-    assert "sql_templates" in plan
     assert len(plan["candidates"]) >= 1
     assert any("facebook" in (c.get("table") or "") or "raw_ads" in (c.get("table") or "") for c in plan["candidates"])
 
 
-def test_planner_sql_templates_contain_table_refs():
+def test_planner_candidates_contain_table_refs():
+    """Planner returns candidates with full table refs (no hardcoded SQL; LLM generates SQL)."""
     with patch("backend.app.copilot.tools.discover_tables") as mock_discover:
         mock_discover.return_value = [
             {"project": "proj", "dataset": "ds", "table": "events", "columns": ["item_id", "views", "channel"]},
         ]
         from backend.app.copilot.planner import analyze
         plan = analyze("views count FT05B facebook", client_id=1, organization_id="org1")
-    assert plan.get("sql_templates")
-    for sql in plan["sql_templates"]:
-        assert "SELECT" in sql.upper()
-        assert "proj" in sql or "ds" in sql or "events" in sql
+    assert plan.get("candidates")
+    for c in plan["candidates"]:
+        full = c.get("table") or ""
+        assert "proj" in full or "ds" in full or "events" in full
+        assert c.get("columns") is not None
 
 
 def test_discover_tables_ranking():

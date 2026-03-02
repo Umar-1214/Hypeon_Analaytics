@@ -33,7 +33,7 @@ def validate(
     question_lower = (question or "").strip().lower()
     wants_metric = any(
         w in question_lower
-        for w in ("count", "views", "views count", "how many", "total", "sum", "number of", "metric")
+        for w in ("count", "views", "revenue", "roas", "ltv", "how many", "total", "sum", "number of", "metric")
     )
     if wants_metric and rows:
         has_numeric = False

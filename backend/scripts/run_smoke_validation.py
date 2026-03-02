@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Run smoke queries with COPILOT_V2=true (mocked BQ) and write artifacts/validation_report.json + chat_logs.
+Run smoke queries with mocked BQ and write artifacts/validation_report.json + chat_logs.
 """
 import json
 import os
@@ -12,7 +12,6 @@ from unittest.mock import patch, MagicMock
 ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = ROOT.parent
 sys.path.insert(0, str(REPO_ROOT))
-os.environ["COPILOT_V2"] = "true"
 
 SMOKE_PROMPTS = [
     "What's the view count of Item Id starting with FT05B coming from Facebook?",
@@ -24,7 +23,7 @@ SMOKE_PROMPTS = [
 
 
 def run_smoke_with_mocks():
-    """Run each smoke prompt through _chat_v2 with mocked run_bigquery_sql and planner; capture logs."""
+    """Run each smoke prompt through chat() with mocked run_bigquery_sql and planner; capture logs."""
     smoke_results = []
     chat_logs_dir = REPO_ROOT / "artifacts" / "chat_logs"
     chat_logs_dir.mkdir(parents=True, exist_ok=True)
@@ -36,7 +35,6 @@ def run_smoke_with_mocks():
             "response_string": "",
             "planner_logs": {"intent": "", "candidates": [], "sql_tried": [], "chosen_sql": None, "row_count": 0},
         }
-        store = MagicMock()
         if "DROP TABLE" in prompt or "Malicious" in prompt:
             # Security test: should never execute DDL; run_bigquery_sql would reject
             from backend.app.clients.bigquery import run_bigquery_sql_readonly
@@ -63,8 +61,8 @@ def run_smoke_with_mocks():
                         "candidates": [{"table": "proj.ds.t1"}, {"table": "proj.ds.t2"}],
                         "sql_templates": ["SELECT 0 AS views FROM `proj.ds.t1` LIMIT 500"],
                     }
-                    from backend.app.copilot.chat_handler import _chat_v2
-                    out = _chat_v2("org1", prompt, "sess1", 1, store)
+                    from backend.app.copilot.chat_handler import chat
+                    out = chat("org1", prompt, session_id="sess1", client_id=1)
             log_entry["response_string"] = out.get("answer") or out.get("text") or ""
             log_entry["planner_logs"]["intent"] = mock_analyze.return_value.get("intent", "")
             log_entry["planner_logs"]["candidates"] = [c.get("table") for c in mock_analyze.return_value.get("candidates", [])[:3]]
@@ -86,8 +84,8 @@ def main():
         mock_run.return_value = {"rows": [{"x": 1}], "schema": ["x"], "row_count": 1, "stats": {}, "error": None}
         with patch("backend.app.copilot.planner.analyze") as mock_analyze:
             mock_analyze.return_value = {"intent": "test", "candidates": [], "sql_templates": ["SELECT 1 LIMIT 1"]}
-            from backend.app.copilot.chat_handler import _chat_v2
-            _chat_v2("org", "test", "sess", 1, MagicMock())
+            from backend.app.copilot.chat_handler import chat
+            chat("org", "test", session_id="sess", client_id=1)
     report = {
         "pytest_summary": {"passed": 85, "failed": 0, "skipped": 2, "total": 87},
         "failed_tests": [],

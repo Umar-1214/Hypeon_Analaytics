@@ -1,6 +1,6 @@
 {
   "user_prompt": "Views for item ABCZZZ9999 on Pinterest",
-  "response_string": "Found 1 row(s). SQL used: SELECT 0 AS views FROM `proj.ds.t1` LIMIT 500",
+  "response_string": "**Result (1 rows)**\n\n| views |\n|---|\n| 0 |",
   "planner_logs": {
     "intent": "views count",
     "candidates": [

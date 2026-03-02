@@ -9,7 +9,7 @@
   "smoke_results": [
     {
       "user_prompt": "What's the view count of Item Id starting with FT05B coming from Facebook?",
-      "response_string": "Found 1 row(s). SQL used: SELECT 0 AS views FROM `proj.ds.t1` LIMIT 500",
+      "response_string": "**Result (1 rows)**\n\n| views |\n|---|\n| 0 |",
       "planner_logs": {
         "intent": "views count",
         "candidates": [
@@ -25,7 +25,7 @@
     },
     {
       "user_prompt": "Total ad spend on Google Ads for Jan 2026 across all campaigns.",
-      "response_string": "Found 1 row(s). SQL used: SELECT 0 AS views FROM `proj.ds.t1` LIMIT 500",
+      "response_string": "**Result (1 rows)**\n\n| views |\n|---|\n| 0 |",
       "planner_logs": {
         "intent": "ad spend",
         "candidates": [
@@ -41,7 +41,7 @@
     },
     {
       "user_prompt": "List top 5 SKUs by revenue last 30 days",
-      "response_string": "Found 1 row(s). SQL used: SELECT 0 AS views FROM `proj.ds.t1` LIMIT 500",
+      "response_string": "**Result (1 rows)**\n\n| views |\n|---|\n| 0 |",
       "planner_logs": {
         "intent": "ad spend",
         "candidates": [
@@ -57,7 +57,7 @@
     },
     {
       "user_prompt": "Views for item ABCZZZ9999 on Pinterest",
-      "response_string": "Found 1 row(s). SQL used: SELECT 0 AS views FROM `proj.ds.t1` LIMIT 500",
+      "response_string": "**Result (1 rows)**\n\n| views |\n|---|\n| 0 |",
       "planner_logs": {
         "intent": "views count",
         "candidates": [

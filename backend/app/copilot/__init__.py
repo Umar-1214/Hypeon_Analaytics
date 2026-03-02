@@ -1,1 +1,1 @@
-"""Copilot package: chat handler (LLM + run_sql), tools, knowledge base, session memory."""
+"""Copilot package: planner + discover_tables + run_bigquery_sql (marts-first fallback to raw), concept_map, session memory."""

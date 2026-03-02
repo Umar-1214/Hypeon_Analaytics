@@ -1,0 +1,139 @@
+{
+  "total": 19,
+  "success": 0,
+  "results": [
+    {
+      "question": "Top 10 product IDs driving 50% of revenue \u2014 pareto/cumulative revenue ranking",
+      "answer": "I couldn't find relevant data for that question. Queries tried: none. Try rephrasing or ask about a different metric (e.g. revenue by product, top channels, ROAS).",
+      "data_rows": 0,
+      "session_id": "sim-0",
+      "success": false
+    },
+    {
+      "question": "High volume vs high profit products \u2014 units sold vs revenue per order, two-axis sort",
+      "answer": "I couldn't find relevant data for that question. Queries tried: none. Try rephrasing or ask about a different metric (e.g. revenue by product, top channels, ROAS).",
+      "data_rows": 0,
+      "session_id": "sim-1",
+      "success": false
+    },
+    {
+      "question": "New product launch performance \u2014 sessions, add-to-cart rate, revenue vs existing catalogue",
+      "answer": "I couldn't find relevant data for that question. Queries tried: none. Try rephrasing or ask about a different metric (e.g. revenue by product, top channels, ROAS).",
+      "data_rows": 0,
+      "session_id": "sim-2",
+      "success": false
+    },
+    {
+      "question": "Products that spiked in last 14 days vs 14 days before \u2014 period-over-period delta",
+      "answer": "I couldn't find relevant data for that question. Queries tried: none. Try rephrasing or ask about a different metric (e.g. revenue by product, top channels, ROAS).",
+      "data_rows": 0,
+      "session_id": "sim-3",
+      "success": false
+    },
+    {
+      "question": "Which two products are most often bought together? \u2014 basket analysis, co-purchase pairs",
+      "answer": "I couldn't find relevant data for that question. Queries tried: none. Try rephrasing or ask about a different metric (e.g. revenue by product, top channels, ROAS).",
+      "data_rows": 0,
+      "session_id": "sim-4",
+      "success": false
+    },
+    {
+      "question": "True last-click ROAS vs what Google/Meta claim \u2014 the double-counting reality check",
+      "answer": "I couldn't find relevant data for that question. Queries tried: none. Try rephrasing or ask about a different metric (e.g. revenue by product, top channels, ROAS).",
+      "data_rows": 0,
+      "session_id": "sim-5",
+      "success": false
+    },
+    {
+      "question": "Which channels actually bring new customers vs recycled buyers \u2014 is_new_customer by channel",
+      "answer": "I couldn't find relevant data for that question. Queries tried: none. Try rephrasing or ask about a different metric (e.g. revenue by product, top channels, ROAS).",
+      "data_rows": 0,
+      "session_id": "sim-6",
+      "success": false
+    },
+    {
+      "question": "Most common channel path before first purchase \u2014 multi-touch journey mapping",
+      "answer": "I couldn't find relevant data for that question. Queries tried: none. Try rephrasing or ask about a different metric (e.g. revenue by product, top channels, ROAS).",
+      "data_rows": 0,
+      "session_id": "sim-7",
+      "success": false
+    },
+    {
+      "question": "Days from first visit to first purchase by channel \u2014 time lag analysis",
+      "answer": "I couldn't find relevant data for that question. Queries tried: none. Try rephrasing or ask about a different metric (e.g. revenue by product, top channels, ROAS).",
+      "data_rows": 0,
+      "session_id": "sim-8",
+      "success": false
+    },
+    {
+      "question": "Which Google campaigns to scale vs pause right now \u2014 campaign-level ROAS with threshold flags",
+      "answer": "I couldn't find relevant data for that question. Queries tried: none. Try rephrasing or ask about a different metric (e.g. revenue by product, top channels, ROAS).",
+      "data_rows": 0,
+      "session_id": "sim-9",
+      "success": false
+    },
+    {
+      "question": "Which channel acquires customers with the highest 90-day LTV \u2014 not first order, total 90-day spend",
+      "answer": "I couldn't find relevant data for that question. Queries tried: none. Try rephrasing or ask about a different metric (e.g. revenue by product, top channels, ROAS).",
+      "data_rows": 0,
+      "session_id": "sim-10",
+      "success": false
+    },
+    {
+      "question": "Repeat purchase rate + what did they first buy \u2014 cohort repurchase analysis",
+      "answer": "I couldn't find relevant data for that question. Queries tried: none. Try rephrasing or ask about a different metric (e.g. revenue by product, top channels, ROAS).",
+      "data_rows": 0,
+      "session_id": "sim-11",
+      "success": false
+    },
+    {
+      "question": "Customers who used to buy every 3\u20134 weeks but went quiet 45\u201390 days ago \u2014 churn risk list",
+      "answer": "I couldn't find relevant data for that question. Queries tried: none. Try rephrasing or ask about a different metric (e.g. revenue by product, top channels, ROAS).",
+      "data_rows": 0,
+      "session_id": "sim-12",
+      "success": false
+    },
+    {
+      "question": "Profile of the top 10% spenders \u2014 channel, first product, purchase frequency",
+      "answer": "I couldn't find relevant data for that question. Queries tried: none. Try rephrasing or ask about a different metric (e.g. revenue by product, top channels, ROAS).",
+      "data_rows": 0,
+      "session_id": "sim-13",
+      "success": false
+    },
+    {
+      "question": "Top 5 cities by revenue vs cities with traffic but no conversions \u2014 geo funnel gap",
+      "answer": "I couldn't find relevant data for that question. Queries tried: none. Try rephrasing or ask about a different metric (e.g. revenue by product, top channels, ROAS).",
+      "data_rows": 0,
+      "session_id": "sim-14",
+      "success": false
+    },
+    {
+      "question": "Countries adding to cart but abandoning checkout \u2014 signals friction or shipping/pricing issues",
+      "answer": "I couldn't find relevant data for that question. Queries tried: none. Try rephrasing or ask about a different metric (e.g. revenue by product, top channels, ROAS).",
+      "data_rows": 0,
+      "session_id": "sim-15",
+      "success": false
+    },
+    {
+      "question": "Mobile vs desktop conversion rate gap \u2014 confirm the suspicion most founders have",
+      "answer": "I couldn't find relevant data for that question. Queries tried: none. Try rephrasing or ask about a different metric (e.g. revenue by product, top channels, ROAS).",
+      "data_rows": 0,
+      "session_id": "sim-16",
+      "success": false
+    },
+    {
+      "question": "Which landing pages generate revenue, not just traffic \u2014 entry page \u2192 order attribution",
+      "answer": "I couldn't find relevant data for that question. Queries tried: none. Try rephrasing or ask about a different metric (e.g. revenue by product, top channels, ROAS).",
+      "data_rows": 0,
+      "session_id": "sim-17",
+      "success": false
+    },
+    {
+      "question": "Where exactly do people drop off in checkout \u2014 paid vs organic \u2014 funnel step comparison",
+      "answer": "I couldn't find relevant data for that question. Queries tried: none. Try rephrasing or ask about a different metric (e.g. revenue by product, top channels, ROAS).",
+      "data_rows": 0,
+      "session_id": "sim-18",
+      "success": false
+    }
+  ]
+}

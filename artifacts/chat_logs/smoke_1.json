@@ -1,6 +1,6 @@
 {
   "user_prompt": "What's the view count of Item Id starting with FT05B coming from Facebook?",
-  "response_string": "Found 1 row(s). SQL used: SELECT 0 AS views FROM `proj.ds.t1` LIMIT 500",
+  "response_string": "**Result (1 rows)**\n\n| views |\n|---|\n| 0 |",
   "planner_logs": {
     "intent": "views count",
     "candidates": [
