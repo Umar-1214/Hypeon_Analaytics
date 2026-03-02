@@ -1,25 +1,33 @@
 """
-Copilot chat handler: User question -> Marts schema + raw fallback schema -> LLM -> run_sql (marts) or run_sql_raw (raw) -> Answer + data.
-Tools: run_sql (primary, marts only), run_sql_raw (fallback, GA4/Ads raw). Response: { answer, data }.
+Copilot chat handler: V1 = run_sql/run_sql_raw; V2 = planner + discover_tables + run_bigquery_sql + retry/fallback.
+Response: { answer, data, text, session_id }.
 """
 from __future__ import annotations
 
 import json
 import logging
+import os
 import uuid
 from typing import Any, Optional
 
-from .tools import COPILOT_TOOLS, execute_tool
+from .tools import COPILOT_TOOLS, COPILOT_TOOLS_V2, execute_tool, run_bigquery_sql
 from .knowledge_base import get_schema_for_copilot, get_raw_schema_for_copilot
+from .defaults import get_max_retries
+from .validator import validate as validate_result
+from . import copilot_metrics
 
 logger = logging.getLogger(__name__)
 
 
+def _is_copilot_v2() -> bool:
+    return os.environ.get("COPILOT_V2", "").strip().lower() in ("true", "1", "yes")
+
+
 def _build_system_template(client_id: int) -> str:
-    """Build system prompt with marts schema and optional raw fallback schema."""
+    """Build system prompt (V1): schema and tools. No dataset preference; use run_sql or run_sql_raw based on need."""
     schema = get_schema_for_copilot()
     raw_schema = get_raw_schema_for_copilot()
-    return f"""You are an expert marketing analytics assistant. Prefer **run_sql** (marts: hypeon_marts, hypeon_marts_ads). Use **run_sql_raw** only when the question clearly needs raw data or run_sql returned no rows and the user needs data.
+    return f"""You are an expert marketing analytics assistant. Use the data warehouse as the source of truth. Choose **run_sql** (marts) or **run_sql_raw** (raw GA4/Ads) based on which tables best answer the question—do not assume marts are always sufficient.
 
 ## Knowledge base (live schema from hypeon_marts and hypeon_marts_ads)
 {schema}
@@ -29,10 +37,10 @@ def _build_system_template(client_id: int) -> str:
 When using run_sql_raw, follow the schema and hints above. Always include LIMIT and, for GA4 events_*, filter by event_date.
 
 ## Tools
-- **run_sql**: Primary. Marts only (fct_sessions, fct_ad_spend). Use for sessions, item views, traffic, ad spend. For item views use fct_sessions with event_name IN ('view_item','view_item_list') and item_id; for "from Google" add utm_source LIKE '%google%'. Always add a date filter for fct_sessions (e.g. WHERE event_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 30 DAY)) to avoid bytes limit errors. For fct_ad_spend filter by client_id = {client_id} when the column exists.
-- **run_sql_raw**: Fallback when marts don't have the data. Allowed: GA4 events_*, Ads ads_AccountBasicStats_*. Use backtick-quoted names. Include LIMIT and date filter for GA4.
+- **run_sql**: Marts (fct_sessions, fct_ad_spend). Use for sessions, item views, traffic, ad spend when marts have the data. For item views use fct_sessions with event_name IN ('view_item','view_item_list') and item_id; for "from Google" add utm_source LIKE '%google%'. Always add a date filter for fct_sessions (e.g. WHERE event_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 30 DAY)) to avoid bytes limit errors. For fct_ad_spend filter by client_id = {client_id} when the column exists.
+- **run_sql_raw**: Raw GA4/Ads when the question needs raw data or run_sql returned no rows. Allowed: GA4 events_*, Ads ads_AccountBasicStats_*. Use backtick-quoted names. Include LIMIT and date filter for GA4.
 
-Call run_sql when the user needs data from marts. Call run_sql_raw only when marts are insufficient. Do not call tools for greetings or thanks.
+Call the tool that matches the data needed. Do not call tools for greetings or thanks.
 
 ## Unavailable channel (e.g. Facebook)
 If the user asks for a channel (e.g. Facebook) that is not in the data, respond with: "[Channel] channel data is not currently present in the dataset. Available channels: google_ads. Once [Channel] data is integrated, this query will be supported." Do NOT mention staging, raw tables, or analytics_cache.
@@ -41,6 +49,128 @@ If the user asks for a channel (e.g. Facebook) that is not in the data, respond 
 - Base answers only on tool results. Never invent metrics.
 - If tool returns no data or error, say so. Do not make up numbers.
 - Response: answer text + optional data. No charts, funnels, or KPI cards."""
+
+
+def _build_system_template_v2(client_id: int) -> str:
+    """Build system prompt for Copilot V2: planner + discover_tables + run_bigquery_sql. No dataset whitelist in prompt."""
+    return f"""You are an expert marketing analytics assistant.
+
+- Treat the data warehouse as the single source of truth.
+- If the answer can be derived from any table in the warehouse, use it.
+- Do not assume a particular dataset or 'marts' status; instead ask the planner to surface candidate tables.
+- Always produce the SQL to be executed in the 'run_bigquery_sql' tool format.
+- Never attempt to write or modify data.
+
+## Tools
+- **discover_tables**: Call with a short intent (from the user question) to get a ranked list of candidate tables with columns and metadata. Use this to choose the best table(s) before writing SQL.
+- **run_bigquery_sql**: Execute a single SELECT (or WITH ... SELECT) query. Read-only; no INSERT/UPDATE/DELETE/CREATE/DROP/ALTER/MERGE/EXPORT. Returns rows, schema, row_count, and stats.
+
+Use discover_tables first when you need to find relevant tables, then run_bigquery_sql with the chosen table(s). For fct_sessions or event tables, add a date filter to avoid bytes limit errors. Filter by client_id = {client_id} when the column exists.
+
+## Answering
+- Base answers only on tool results. Never invent metrics.
+- If a query returns no rows, you may try alternate candidate tables (re-run discover_tables or try another SQL plan).
+- Response: answer text + optional data. Include which table was used and the SQL for explainability. No charts, funnels, or KPI cards."""
+
+
+def _chat_v2(
+    organization_id: str,
+    message: str,
+    session_id: str,
+    client_id: int,
+    store: Any,
+) -> dict[str, Any]:
+    """
+    Copilot V2: planner -> run_bigquery_sql (retry up to MAX_RETRIES) -> validate -> LLM answer.
+    """
+    from .planner import analyze as planner_analyze, replan as planner_replan
+    from ..llm_claude import is_claude_configured, chat_completion_with_tools as claude_tools_chat
+    from ..llm_gemini import is_gemini_configured, chat_completion_with_tools as gemini_tools_chat
+
+    max_retries = get_max_retries()
+    copilot_metrics.increment("copilot.planner_attempts_total")
+    plan = planner_analyze(message, context=None, client_id=client_id, organization_id=organization_id)
+    sql_templates = list(plan.get("sql_templates") or [])
+    valid_result = None
+    sql_used = None
+    tables_tried: list[str] = []
+    attempt = 0
+    template_index = 0
+
+    while attempt < max_retries:
+        if template_index >= len(sql_templates):
+            replan_result = planner_replan(message, failed_sql=sql_used, client_id=client_id, organization_id=organization_id)
+            sql_templates = list(replan_result.get("sql_templates") or [])
+            template_index = 0
+            if not sql_templates:
+                break
+        sql_used = sql_templates[template_index]
+        template_index += 1
+        tables_tried.append(sql_used)
+        attempt += 1
+        try:
+            out = run_bigquery_sql(sql_used, organization_id=organization_id, client_id=client_id)
+        except Exception as e:
+            logger.warning("Copilot V2 run_bigquery_sql failed: %s", e)
+            continue
+        if out.get("error"):
+            continue
+        is_valid, _reason = validate_result(out, message, allow_empty=False)
+        if is_valid:
+            valid_result = out
+            if attempt > 1:
+                copilot_metrics.increment("copilot.fallback_success_total")
+            break
+
+    if valid_result is not None and sql_used:
+        rows = valid_result.get("rows") or []
+        logger.info(
+            "Copilot V2 success | intent=%s attempts=%s sql_len=%d row_count=%d",
+            plan.get("intent", ""),
+            attempt,
+            len(sql_used or ""),
+            len(rows),
+        )
+        data_preview = json.dumps(rows[:5], default=str)[:1500]
+        answer_prompt = (
+            f"The user asked: {message}\n\n"
+            f"SQL used: {sql_used}\n\n"
+            f"Result ({len(rows)} rows): {data_preview}\n\n"
+            "Summarize this in a clear, concise answer. Include the key number(s) and which table was used. Do not invent data."
+        )
+        msgs = [{"role": "user", "content": answer_prompt}]
+        system = "You are a helpful analytics assistant. Reply with a short, accurate summary of the query result. No markdown tables."
+        if is_claude_configured():
+            try:
+                res = claude_tools_chat(msgs, [], system=system)
+                final_text = (res.get("text") or "").strip() or f"Found {len(rows)} row(s). SQL: {sql_used}"
+            except Exception:
+                res = gemini_tools_chat(msgs, [], system=system) if is_gemini_configured() else {}
+                final_text = (res.get("text") or "").strip() or f"Found {len(rows)} row(s). SQL: {sql_used}"
+        elif is_gemini_configured():
+            res = gemini_tools_chat(msgs, [], system=system)
+            final_text = (res.get("text") or "").strip() or f"Found {len(rows)} row(s). SQL: {sql_used}"
+        else:
+            final_text = f"Found {len(rows)} row(s). SQL used: {sql_used}"
+        store.append(organization_id, session_id, "user", message)
+        store.append(organization_id, session_id, "assistant", final_text, meta=None)
+        return {"answer": final_text, "data": rows, "text": final_text, "session_id": session_id}
+
+    copilot_metrics.increment("copilot.query_empty_results_total")
+    tables_msg = "; ".join(tables_tried[:3]) if tables_tried else "none"
+    logger.info(
+        "Copilot V2 no valid result | intent=%s attempts=%s tables_tried=%s",
+        plan.get("intent", ""),
+        attempt,
+        tables_tried[:3],
+    )
+    final_text = (
+        f"I couldn't find relevant rows for that question. Tables/queries I tried: {tables_msg}. "
+        "You can rephrase or ask about a different metric."
+    )
+    store.append(organization_id, session_id, "user", message)
+    store.append(organization_id, session_id, "assistant", final_text, meta=None)
+    return {"answer": final_text, "data": [], "text": final_text, "session_id": session_id}
 
 
 def chat(
@@ -71,6 +201,14 @@ def chat(
     except (TypeError, ValueError):
         cid = 1
     max_rounds = 5
+
+    # Copilot V2: planner-driven execution + retry/fallback (feature flag)
+    if _is_copilot_v2():
+        msg_clean = (message or "").strip()
+        if msg_clean and len(msg_clean) <= 50 and msg_clean.lower() in ("hi", "hello", "hey", "howdy", "hi there", "hello there", "yo", "sup"):
+            pass  # greeting handled below by V1-style reply
+        elif msg_clean:
+            return _chat_v2(organization_id, message, sid, cid, store)
 
     def _normalize_for_compare(s: str) -> str:
         if not s:

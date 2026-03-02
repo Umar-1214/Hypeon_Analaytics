@@ -254,6 +254,151 @@ def run_readonly_query_raw(
         return {"rows": [], "error": str(e)[:300]}
 
 
+# ----- Copilot V2: schema discovery and unified run_bigquery_sql (no dataset whitelist) -----
+
+
+def _forbidden_sql_keywords() -> tuple[str, ...]:
+    """Keywords that make a query non-read-only."""
+    return (
+        "INSERT", "UPDATE", "DELETE", "DROP", "CREATE", "ALTER",
+        "TRUNCATE", "GRANT", "REVOKE", "MERGE", "EXPORT",
+    )
+
+
+def run_bigquery_sql_readonly(
+    sql: str,
+    client_id: int,
+    organization_id: str,
+    max_rows: int = 500,
+    timeout_sec: float = 20.0,
+    dry_run: bool = False,
+) -> dict:
+    """
+    Run a read-only BigQuery query for Copilot V2. Validates SELECT-only (no DML/DDL).
+    No hard-coded dataset whitelist; access is enforced by IAM.
+    Returns {"rows": [...], "schema": [...], "row_count": int, "stats": {...}, "error": None or str}.
+    """
+    from google.cloud import bigquery
+
+    sql = (sql or "").strip()
+    if not sql:
+        return {"rows": [], "schema": [], "row_count": 0, "stats": {}, "error": "Empty query."}
+
+    sql_normalized = sql.rstrip(";").strip()
+    if ";" in sql_normalized:
+        return {"rows": [], "schema": [], "row_count": 0, "stats": {}, "error": "Only a single SELECT statement is allowed."}
+
+    upper = sql_normalized.upper()
+    if not upper.startswith("SELECT") and not upper.startswith("WITH"):
+        return {"rows": [], "schema": [], "row_count": 0, "stats": {}, "error": "Only SELECT (or WITH ... SELECT) queries are allowed."}
+    for verb in _forbidden_sql_keywords():
+        if verb in upper:
+            return {"rows": [], "schema": [], "row_count": 0, "stats": {}, "error": f"Only read-only SELECT is allowed (no {verb})."}
+
+    if "LIMIT" not in upper:
+        sql_normalized = f"{sql_normalized} LIMIT {max_rows}"
+
+    try:
+        max_mb = int(os.environ.get("BQ_COPILOT_MAX_BYTES_BILLED_MB", "300"))
+        max_mb = max(50, min(max_mb, 1024))
+    except (TypeError, ValueError):
+        max_mb = 300
+    max_bytes_billed = max_mb * 1024 * 1024
+
+    client = get_client()
+    job_config = bigquery.QueryJobConfig(maximum_bytes_billed=max_bytes_billed)
+
+    if dry_run:
+        try:
+            dry_config = bigquery.QueryJobConfig(dry_run=True)
+            client.query(sql_normalized, job_config=dry_config)
+            return {"rows": [], "schema": [], "row_count": 0, "stats": {"dry_run": True}, "error": None}
+        except Exception as e:
+            return {"rows": [], "schema": [], "row_count": 0, "stats": {}, "error": str(e)[:300]}
+
+    try:
+        query_job = client.query(sql_normalized, job_config=job_config)
+        iterator = query_job.result(max_results=max_rows, timeout=timeout_sec)
+        rows = []
+        schema_names = [f.name for f in query_job.schema] if query_job.schema else []
+        for row in iterator:
+            rows.append(dict(row.items()))
+        total = getattr(iterator, "total_rows", None) or len(rows)
+        return {
+            "rows": rows,
+            "schema": schema_names,
+            "row_count": len(rows),
+            "stats": {"total_rows": total, "job_id": getattr(query_job, "job_id", None)},
+            "error": None,
+        }
+    except Exception as e:
+        return {"rows": [], "schema": [], "row_count": 0, "stats": {}, "error": str(e)[:300]}
+
+
+def list_tables_for_discovery(
+    project: str | None = None,
+    datasets: list[str] | None = None,
+    location: str | None = None,
+) -> list[dict]:
+    """
+    List BASE TABLEs from INFORMATION_SCHEMA for the given project/datasets.
+    Returns list of {"project", "dataset", "table_name", "columns": [{"name", "data_type"}], "last_updated": ...}.
+    If datasets is None, uses MARTS_DATASET, MARTS_ADS_DATASET, GA4_DATASET, ADS_DATASET from env.
+    """
+    from google.cloud import bigquery
+
+    project = project or _project()
+    if datasets is None:
+        datasets = [
+            get_marts_dataset(),
+            get_marts_ads_dataset(),
+            get_ga4_dataset(),
+            get_ads_dataset(),
+        ]
+    location = location or os.environ.get("BQ_LOCATION", "europe-north2")
+    client = bigquery.Client(project=project, location=location)
+    out: list[dict] = []
+
+    for dataset in datasets:
+        dataset = (dataset or "").strip()
+        if not dataset:
+            continue
+        try:
+            tables_sql = f"""
+            SELECT table_catalog, table_schema, table_name
+            FROM `{project}.{dataset}.INFORMATION_SCHEMA.TABLES`
+            WHERE table_type = 'BASE TABLE'
+            """
+            tbl_job = client.query(tables_sql)
+            for row in tbl_job.result():
+                catalog = row.get("table_catalog") or project
+                schema = row.get("table_schema") or dataset
+                table_name = (row.get("table_name") or "").strip()
+                if not table_name:
+                    continue
+                cols_sql = f"""
+                SELECT column_name, data_type
+                FROM `{project}.{dataset}.INFORMATION_SCHEMA.COLUMNS`
+                WHERE table_name = @tname
+                ORDER BY ordinal_position
+                """
+                job_config = bigquery.QueryJobConfig(
+                    query_parameters=[bigquery.ScalarQueryParameter("tname", "STRING", table_name)]
+                )
+                col_job = client.query(cols_sql, job_config=job_config)
+                columns = [{"name": r.get("column_name"), "data_type": r.get("data_type")} for r in col_job.result()]
+                out.append({
+                    "project": catalog,
+                    "dataset": schema,
+                    "table_name": table_name,
+                    "columns": columns,
+                    "last_updated": None,
+                })
+        except Exception:
+            continue
+    return out
+
+
 def get_marts_schema_live() -> list[dict] | None:
     """
     Fetch live schema from hypeon_marts and hypeon_marts_ads for Copilot.
