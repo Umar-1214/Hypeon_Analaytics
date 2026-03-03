@@ -11,6 +11,29 @@
   }
 }
 
+/* Copilot page background */
+.copilot-page-bg {
+  background:
+    radial-gradient(
+      1200px 600px at 10% 20%,
+      rgba(253, 231, 243, 0.9),
+      transparent 60%
+    ),
+    radial-gradient(
+      1000px 500px at 90% 30%,
+      rgba(232, 240, 255, 0.9),
+      transparent 55%
+    ),
+    radial-gradient(
+      800px 400px at 50% 100%,
+      rgba(243, 232, 255, 0.8),
+      transparent 60%
+    ),
+    #fcfcfd;
+  color: #111827;
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+}
+
 /* Glass container utility */
 @layer components {
   .glass-container {
@@ -96,6 +119,534 @@
 
 .scrollbar-sidebar::-webkit-scrollbar-thumb:active {
   background: rgba(255 255 255 / 0.6);
+}
+
+/* Copilot sidebar – glass panel */
+.copilot-sidebar {
+  position: fixed;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  box-sizing: border-box;
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  color: #111827;
+  border-top-right-radius: 18px;
+  border-bottom-right-radius: 18px;
+  overflow: hidden;
+  background: linear-gradient(
+    180deg,
+    rgba(255,255,255,0.30),
+    rgba(255,255,255,0.18)
+  );
+  backdrop-filter: blur(26px) saturate(1.35);
+  -webkit-backdrop-filter: blur(26px) saturate(1.35);
+  border-right: 1px solid rgba(255, 255, 255, 0.45);
+  transition:
+    transform 560ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 420ms ease,
+    backdrop-filter 420ms ease;
+  will-change: transform;
+  box-shadow:
+    6px 0 30px rgba(2, 6, 23, 0.20),
+    inset -1px 0 0 rgba(255,255,255,0.45);
+  z-index: 1200;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.copilot-sidebar .newChat {
+  width: calc(100% - 4px);
+  margin: 8px auto 10px;
+  padding: 8px 12px;
+  background: linear-gradient(
+    180deg,
+    rgba(255,255,255,0.55),
+    rgba(255,255,255,0.25)
+  );
+  backdrop-filter: blur(14px);
+  border-radius: 12px;
+  border: 1px solid #e5e7eb;
+  box-shadow:
+    0 1px 2px rgba(16, 24, 40, 0.06),
+    0 4px 12px rgba(16, 24, 40, 0.04);
+  font-size: 13px;
+  margin-top: 20px;
+  text-align: left;
+  cursor: pointer;
+  color: #111827;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+}
+
+.copilot-sidebar .newChat:hover {
+  background: #fbfdff;
+  transform: translateY(-1px);
+}
+
+.copilot-sidebar .iconWrap {
+  display: inline-flex;
+  width: 28px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.copilot-sidebar .newChatText {
+  line-height: 1;
+  font-size: 13px;
+}
+
+.copilot-sidebar .menuBtn {
+  width: calc(100% - 4px);
+  margin: 8px auto 10px;
+  padding: 8px 12px;
+  background: linear-gradient(
+    180deg,
+    rgba(255,255,255,0.55),
+    rgba(255,255,255,0.25)
+  );
+  backdrop-filter: blur(14px);
+  border-radius: 12px;
+  border: 1px solid #e5e7eb;
+  box-shadow:
+    0 1px 2px rgba(16, 24, 40, 0.06),
+    0 4px 12px rgba(16, 24, 40, 0.04);
+  font-size: 13px;
+  text-align: left;
+  cursor: default;
+  color: #111827;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+}
+
+.copilot-sidebar .menuBtn:hover {
+  background: #f3f4f6;
+}
+
+.copilot-sidebar .menuBtn input {
+  background: transparent;
+  border: none;
+  outline: none;
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: #111827;
+}
+
+.copilot-sidebar .menuBtn input::placeholder {
+  color: #6b7280;
+}
+
+/* Collapsed sidebar: icon-only, same as image – simple black icons, no pill */
+.copilot-sidebar.copilot-sidebar-collapsed .newChat {
+  width: 100%;
+  max-width: 48px;
+  margin: 16px auto 0;
+  padding: 10px;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  backdrop-filter: none;
+  justify-content: center;
+  color: #111;
+}
+
+.copilot-sidebar.copilot-sidebar-collapsed .newChat:hover {
+  background: rgba(0, 0, 0, 0.04);
+  transform: none;
+}
+
+.copilot-sidebar.copilot-sidebar-collapsed .newChat .newChatText {
+  display: none;
+}
+
+.copilot-sidebar.copilot-sidebar-collapsed .newChat .iconWrap {
+  color: #111;
+  font-weight: 700;
+  font-size: 24px;
+}
+
+.copilot-sidebar.copilot-sidebar-collapsed .menuBtn {
+  width: 100%;
+  max-width: 48px;
+  margin: 12px auto 0;
+  padding: 10px;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  backdrop-filter: none;
+  justify-content: center;
+  color: #111;
+}
+
+.copilot-sidebar.copilot-sidebar-collapsed .menuBtn:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.copilot-sidebar.copilot-sidebar-collapsed .menuBtn input {
+  display: none;
+}
+
+.copilot-sidebar.copilot-sidebar-collapsed .menuBtn .iconWrap {
+  color: #111;
+}
+
+.copilot-sidebar.copilot-sidebar-collapsed .menuBtn .iconWrap svg {
+  width: 20px;
+  height: 20px;
+}
+
+.copilot-sidebar.copilot-sidebar-collapsed .sidebar-avatar-wrap {
+  justify-content: center;
+  padding-top: 8px;
+}
+
+/* ===== Reference sidebar structure (open) ===== */
+.copilot-sidebar {
+  width: 240px;
+  padding: 12px 12px 10px;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 6px 0 30px rgba(2, 6, 23, 0.06);
+  transition:
+    transform 420ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 260ms ease,
+    backdrop-filter 420ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.copilot-sidebar.copilot-sidebar-collapsed {
+  width: 50px;
+  padding: 10px 6px;
+  justify-content: flex-start;
+  box-shadow: 6px 0 20px rgba(2, 6, 23, 0.04);
+  transition: width 240ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.copilot-sidebar .topRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px 12px;
+}
+
+.copilot-sidebar .headerLeft {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+}
+
+.copilot-sidebar .logoWrapper {
+  width: 48px;
+  height: 48px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.copilot-sidebar .brandText {
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1;
+  color: #111;
+}
+
+.copilot-sidebar .topToggle {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.38);
+  backdrop-filter: blur(16px) saturate(180%);
+  -webkit-backdrop-filter: blur(16px) saturate(180%);
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  color: rgba(15, 23, 42, 0.78);
+  flex-shrink: 0;
+
+}
+
+.copilot-sidebar .topToggle:hover {
+  border-color: rgba(236, 72, 153, 0.38);
+  color: rgba(236, 72, 153, 0.95);
+  box-shadow:
+    0 10px 26px rgba(236, 72, 153, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.5);
+}
+
+.copilot-sidebar .section {
+  margin-bottom: 16px;
+}
+
+.copilot-sidebar .chatsWrapper {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding-bottom: 6px;
+}
+
+.copilot-sidebar .sectionTitle {
+  font-size: 11px;
+  text-transform: uppercase;
+  color: #080909;
+  margin-bottom: 6px;
+  margin-left: 10px;
+  letter-spacing: 0.04em;
+}
+
+.copilot-sidebar .list {
+  flex: 1;
+  min-height: 0;
+  font-size: 14px;
+  list-style: none;
+  padding: 6px 0;
+  margin: 0;
+  overflow-y: auto;
+  overflow-x: visible;
+  -webkit-overflow-scrolling: touch;
+  padding-right: 8px;
+}
+
+.copilot-sidebar .listItem {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  margin: 2px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  overflow: visible;
+  width: calc(100% - 16px);
+  border: none;
+  background: transparent;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+
+.copilot-sidebar .listItem:hover {
+  background: #e5e7eb;
+}
+
+.copilot-sidebar .listItem.active {
+  background: rgba(99, 102, 241, 0.12);
+  box-shadow: inset 3px 0 0 rgba(236, 72, 153, 0.9);
+}
+
+.copilot-sidebar .listItem.active:hover {
+  background: rgba(99, 102, 241, 0.16);
+}
+
+.copilot-sidebar .chatTitle {
+  flex: 1;
+  min-width: 0;
+  white-space: normal;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 14px;
+  line-height: 1.25;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.copilot-sidebar .footer {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.55),
+    rgba(255, 255, 255, 0.25)
+  );
+  backdrop-filter: blur(14px);
+  border: 1px solid rgba(163, 142, 142, 0.45);
+  margin-bottom: 10px;
+  padding: 8px;
+  border-radius: 12px;
+}
+
+.copilot-sidebar .avatar {
+  width: 28px;
+  height: 28px;
+  background: #111827;
+  color: #f9fafb;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.copilot-sidebar .username {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.copilot-sidebar .plan {
+  font-size: 11px;
+  color: #6b7280;
+}
+
+.copilot-sidebar .backToAnalytics {
+  width: calc(100% - 4px);
+  margin: 8px auto;
+  padding: 8px 12px;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.55),
+    rgba(255, 255, 255, 0.25)
+  );
+  backdrop-filter: blur(14px);
+  border-radius: 12px;
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 4px 12px rgba(16, 24, 40, 0.04);
+  font-size: 13px;
+  font-weight: 600;
+  color: #111827;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  transition: background 0.2s ease, transform 0.15s ease;
+}
+
+.copilot-sidebar .backToAnalytics:hover {
+  background: #f3f4f6;
+}
+
+/* When sidebar closed: rail styles */
+.copilot-sidebar.copilot-sidebar-collapsed .railTop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  margin-top: 4px;
+}
+
+.copilot-sidebar.copilot-sidebar-collapsed .topRow.railTop {
+  flex-direction: row;
+  justify-content: center;
+  padding: 8px 4px;
+}
+
+.copilot-sidebar.copilot-sidebar-collapsed .topToggle {
+  display: none;
+}
+
+.copilot-sidebar.copilot-sidebar-collapsed .logoMini {
+  width: 48px;
+  height: 48px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  position: relative;
+  margin-bottom: 10px;
+  flex-shrink: 0;
+}
+
+.copilot-sidebar.copilot-sidebar-collapsed .logoMiniArrow {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #111827;
+  font-size: 14px;
+  opacity: 0;
+  transition: opacity 0.15s ease, background 0.15s ease;
+}
+
+.copilot-sidebar.copilot-sidebar-collapsed .logoMini .logoImg {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.15s ease;
+}
+
+.copilot-sidebar.copilot-sidebar-collapsed .logoMini:hover .logoImg {
+  opacity: 0.6;
+}
+
+.copilot-sidebar.copilot-sidebar-collapsed .logoMini:hover .logoMiniArrow {
+  opacity: 1;
+  background: rgb(255, 255, 255);
+}
+
+.copilot-sidebar.copilot-sidebar-collapsed .railBottom {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 12px 0;
+}
+
+.copilot-sidebar.copilot-sidebar-collapsed .railIconBtn {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s ease, transform 0.15s ease;
+}
+
+.copilot-sidebar.copilot-sidebar-collapsed .railIconBtn:hover {
+  background: #f3f4f6;
+  transform: translateY(-1px);
+}
+
+.copilot-sidebar.copilot-sidebar-collapsed .section.railTop {
+  margin-bottom: 0;
+  align-items: center;
+}
+
+.copilot-sidebar.copilot-sidebar-collapsed .avatarRail {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: #111827;
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.copilot-sidebar .topToggle:focus,
+.copilot-sidebar .newChat:focus,
+.copilot-sidebar .menuBtn:focus,
+.copilot-sidebar .backToAnalytics:focus {
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+  outline: none;
 }
 
 /* Copilot entrance and message animations */

@@ -38,6 +38,7 @@ export default {
         'gradient-app': 'linear-gradient(135deg, #fdf2f8 0%, #fce7f3 25%, #ffffff 50%, #fae8ff 75%, #fdf2f8 100%)',
         'gradient-sidebar': 'linear-gradient(180deg, #831843 0%, #9d174d 30%, #be185d 100%)',
         'gradient-card': 'linear-gradient(145deg, rgba(255,255,255,0.9) 0%, rgba(253,242,248,0.95) 100%)',
+        'gradient-brand': 'linear-gradient(135deg, #7c3aed 0%, #ec4899 50%, #f97316 100%)',
       },
       backdropBlur: {
         xs: '2px',
