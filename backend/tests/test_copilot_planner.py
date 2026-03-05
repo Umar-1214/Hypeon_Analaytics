@@ -201,6 +201,7 @@ def test_run_bigquery_sql_readonly_rejects_drop():
 
 def test_run_bigquery_sql_readonly_accepts_with_cte():
     """run_bigquery_sql_readonly must accept WITH ... SELECT (read-only)."""
+    org_ctx = {"bq_project": "test-proj", "marts_dataset": "marts", "marts_ads_dataset": "marts_ads", "bq_location": "europe-north2"}
     with patch("backend.app.clients.bigquery.get_client") as mock_get:
         mock_job = MagicMock()
         mock_job.schema = [MagicMock(name="x")]
@@ -208,12 +209,13 @@ def test_run_bigquery_sql_readonly_accepts_with_cte():
         mock_row.items.return_value = [("x", 1)]
         mock_job.result.return_value = [mock_row]
         mock_get.return_value.query.return_value = mock_job
-        from backend.app.clients.bigquery import run_bigquery_sql_readonly
-        out = run_bigquery_sql_readonly(
-            "WITH x AS (SELECT 1 AS x) SELECT * FROM x LIMIT 1",
-            client_id=1,
-            organization_id="org",
-        )
+        with patch("backend.app.clients.bigquery._get_bq_context", return_value=org_ctx):
+            from backend.app.clients.bigquery import run_bigquery_sql_readonly
+            out = run_bigquery_sql_readonly(
+                "WITH x AS (SELECT 1 AS x) SELECT * FROM x LIMIT 1",
+                client_id=1,
+                organization_id="org",
+            )
     assert out.get("error") is None
     assert len(out.get("rows") or []) == 1
     assert out["rows"][0].get("x") == 1

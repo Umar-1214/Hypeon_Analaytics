@@ -84,6 +84,7 @@ def test_planner_returns_candidates_with_columns():
 
 def test_chat_returns_formatted_answer_for_real_question_when_mock_returns_data():
     """Chat returns a well-structured answer when LLM SQL + run return rows (real question)."""
+    org_ctx = {"bq_project": "p", "marts_dataset": "d", "marts_ads_dataset": "d_ads", "bq_location": "europe-north2"}
     with patch("backend.app.copilot.chat_handler.run_bigquery_sql") as mock_run:
         mock_run.return_value = {
             "rows": [
@@ -102,14 +103,15 @@ def test_chat_returns_formatted_answer_for_real_question_when_mock_returns_data(
                     "intent": "top 10 product revenue pareto",
                     "candidates": [{"table": "p.d.t", "columns": ["item_id", "revenue", "cumulative_pct"]}],
                 }
-                from backend.app.copilot.chat_handler import chat
+                with patch("backend.app.auth.firestore_user.get_org_bq_context", return_value=org_ctx):
+                    from backend.app.copilot.chat_handler import chat
 
-                out = chat(
-                    "org1",
-                    "Top 10 product IDs driving 50% of revenue — pareto/cumulative revenue ranking",
-                    session_id="s1",
-                    client_id=1,
-                )
+                    out = chat(
+                        "org1",
+                        "Top 10 product IDs driving 50% of revenue — pareto/cumulative revenue ranking",
+                        session_id="s1",
+                        client_id=1,
+                    )
     assert out.get("answer") or out.get("text")
     assert out.get("data") and len(out["data"]) == 2
     assert "session_id" in out
@@ -127,3 +129,23 @@ def test_chat_handles_greeting_without_planner():
     mock_analyze.assert_not_called()
     mock_run.assert_not_called()
     assert "hi" in (out.get("answer") or "").lower() or "help" in (out.get("answer") or "").lower()
+
+
+def test_copilot_prompt_is_dynamic_for_any_datasets():
+    """Copilot uses discovered schema only; no hardcoded table names in guide or schema block."""
+    from backend.app.copilot.chat_handler import _build_sql_prompt, _SQL_GUIDE
+
+    # Custom table names (not fct_sessions / fct_ad_spend) to prove schema-agnostic
+    candidates = [
+        {"table": "my_proj.my_ds.my_events", "columns": [{"name": "event_name", "data_type": "STRING"}, {"name": "revenue", "data_type": "FLOAT64"}]},
+        {"table": "my_proj.ads_ds.spend_by_channel", "columns": [{"name": "channel", "data_type": "STRING"}, {"name": "cost", "data_type": "FLOAT64"}]},
+    ]
+    system, user_msg = _build_sql_prompt("Top 5 products by revenue", candidates, client_id=1)
+    # Schema block must contain the discovered table names
+    assert "my_events" in user_msg
+    assert "spend_by_channel" in user_msg
+    assert "my_proj.my_ds.my_events" in user_msg or "my_events" in user_msg
+    # SQL guide must not hardcode specific marts table names (dynamic for any dataset)
+    assert "fct_sessions" not in _SQL_GUIDE
+    assert "fct_ad_spend" not in _SQL_GUIDE
+    assert "fct_orders" not in _SQL_GUIDE

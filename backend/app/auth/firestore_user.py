@@ -156,7 +156,7 @@ def get_org_bq_context(organization_id: str) -> Optional[dict[str, Any]]:
     Returns dict with: bq_project, bq_source_project, marts_dataset, marts_ads_dataset,
     ga4_dataset, ads_dataset, bq_location, bq_location_ads.
     Uses first dataset of each type (marts, marts_ads, ga4, ads). If no type, first dataset is treated as marts.
-    Returns None if org has no projects (caller should fall back to env).
+    Returns None if org has no projects (callers must not use shared env; show "datasets not configured" instead).
     """
     org_doc = get_organization(organization_id)
     flat = get_org_projects_flat(org_doc)

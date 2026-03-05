@@ -28,9 +28,9 @@ _SQL_GUIDE = """You are a BigQuery SQL expert for a read-only analytics warehous
 - Date filters: If the schema shows event_date or event_time with type STRING, the column is usually YYYYMMDD format. Use PARSE_DATE('%Y%m%d', event_date) for date comparison, or filter with: event_date >= FORMAT_DATE('%Y%m%d', DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY)). Do NOT use CAST(event_date AS DATE) or compare a STRING column directly to a DATE. If the column type is DATE or TIMESTAMP, you may use event_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY).
 - If a table has client_id, filter by client_id = {client_id} when the question is about this client.
 - For "days from first visit to first purchase" or "time lag" by channel: get first visit date (e.g. MIN(event_date) WHERE event_name = 'session_start') and first purchase date (e.g. MIN(event_date) WHERE event_name = 'purchase') per user; JOIN on user_pseudo_id only (do not require same utm_source on both); then attribute by the utm_source of the first visit. Use DATE_DIFF for days between dates.
-- For ROAS or revenue vs cost: join fct_orders (revenue) with fct_ad_spend (cost) by channel/campaign where possible; use COALESCE for missing keys. Prefer marts; if no join key, use utm_source/campaign_id.
-- Funnel (drop-off, checkout): use event_name IN ('view_item','add_to_cart','begin_checkout','purchase','session_start'). Break down by utm_source or device for paid vs organic.
-- Landing page / entry page: use page_location and the first event per session (e.g. ROW_NUMBER() OVER (PARTITION BY user_pseudo_id ORDER BY event_timestamp)); event_name can be session_start or page_view if present.
+- For ROAS or revenue vs cost: use tables from the schema below that contain revenue and cost/spend; join them by channel or campaign where columns exist; use COALESCE for missing keys. If no join key, use utm_source or campaign_id where present.
+- Funnel (drop-off, checkout): when the schema has event_name, use event_name IN ('view_item','add_to_cart','begin_checkout','purchase','session_start'). Break down by utm_source or device if those columns exist.
+- Landing page / entry page: when the schema has page_location and session/user identifiers, use the first event per session (e.g. ROW_NUMBER() OVER (PARTITION BY user_pseudo_id ORDER BY event_timestamp)); event_name can be session_start or page_view if present.
 
 ## What NOT to do
 - Do NOT use INSERT, UPDATE, DELETE, MERGE, CREATE, DROP, ALTER, TRUNCATE, GRANT, REVOKE, EXPORT. Only SELECT is allowed.
@@ -317,6 +317,19 @@ def chat(
         store.append(organization_id, sid, "assistant", reply, meta=None)
         return {"answer": reply, "data": [], "text": reply, "session_id": sid}
 
+    # When org has no BQ config, do not use shared env; tell user to configure datasets. ("default" org may use env.)
+    o = (organization_id or "").strip()
+    if o and o.lower() != "default":
+        try:
+            from ..auth.firestore_user import get_org_bq_context
+            if get_org_bq_context(organization_id) is None:
+                from ..clients.bigquery import MSG_ORG_DATASETS_NOT_CONFIGURED
+                store.append(organization_id, sid, "user", message)
+                store.append(organization_id, sid, "assistant", MSG_ORG_DATASETS_NOT_CONFIGURED, meta=None)
+                return {"answer": MSG_ORG_DATASETS_NOT_CONFIGURED, "data": [], "text": MSG_ORG_DATASETS_NOT_CONFIGURED, "session_id": sid}
+        except Exception:
+            pass
+
     start_ms = time.perf_counter() * 1000
     max_retries = get_max_retries()
     copilot_metrics.increment("copilot.planner_attempts_total")
@@ -372,7 +385,7 @@ def chat(
         previous_sql = sql_used
         previous_error = (
             "Query returned no rows or invalid result. "
-            "Try a different table (e.g. raw events or fct_sessions), a wider time window, or fewer WHERE filters."
+            "Try a different table from the schema, a wider time window, or fewer WHERE filters."
         )
 
     if valid_result is not None and sql_used:
@@ -472,6 +485,20 @@ def chat_stream(
         yield {"phase": "done", "answer": reply, "data": [], "session_id": sid}
         return
 
+    # When org has no BQ config, do not use shared env; tell user to configure datasets. ("default" org may use env.)
+    o = (organization_id or "").strip()
+    if o and o.lower() != "default":
+        try:
+            from ..auth.firestore_user import get_org_bq_context
+            if get_org_bq_context(organization_id) is None:
+                from ..clients.bigquery import MSG_ORG_DATASETS_NOT_CONFIGURED
+                store.append(organization_id, sid, "user", message)
+                store.append(organization_id, sid, "assistant", MSG_ORG_DATASETS_NOT_CONFIGURED, meta=None)
+                yield {"phase": "done", "answer": MSG_ORG_DATASETS_NOT_CONFIGURED, "data": [], "session_id": sid}
+                return
+        except Exception:
+            pass
+
     try:
         yield {"phase": "analyzing", "message": "Understanding your question…"}
         max_retries = get_max_retries()
@@ -531,7 +558,7 @@ def chat_stream(
             previous_sql = sql_used
             previous_error = (
                 "Query returned no rows or invalid result. "
-                "Try a different table (e.g. raw events or fct_sessions), a wider time window, or fewer WHERE filters."
+                "Try a different table from the schema, a wider time window, or fewer WHERE filters."
             )
 
         if valid_result is not None and sql_used:

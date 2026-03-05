@@ -19,8 +19,21 @@ def _is_table_not_found(exc: BaseException) -> bool:
 _client: Any = None
 
 
+# Message when org has no Firestore BQ config (no shared env fallback).
+MSG_ORG_DATASETS_NOT_CONFIGURED = (
+    "Datasets are not configured for your organization. "
+    "Please ask your administrator to set up BigQuery data sources in your organization settings."
+)
+
+
+def _org_requires_bq_config(organization_id: Optional[str]) -> bool:
+    """True when we must have Firestore BQ config for this org (no env fallback). Empty or 'default' org may use env."""
+    o = (organization_id or "").strip()
+    return bool(o) and o.lower() != "default"
+
+
 def _get_bq_context(organization_id: Optional[str] = None) -> Optional[dict]:
-    """Resolve BQ config from Firestore org when organization_id is set. Returns None if not found (use env)."""
+    """Resolve BQ config from Firestore org when organization_id is set. Returns None if not found (no env fallback when org is set)."""
     if not (organization_id or "").strip():
         return None
     try:
@@ -243,6 +256,8 @@ def run_readonly_query_raw(
             return {"rows": [], "error": f"Only read-only SELECT is allowed (no {verb})."}
 
     ctx = _get_bq_context(organization_id)
+    if _org_requires_bq_config(organization_id) and (not ctx or not (ctx.get("ga4_dataset") or ctx.get("ads_dataset"))):
+        return {"rows": [], "error": MSG_ORG_DATASETS_NOT_CONFIGURED}
     if ctx and (ctx.get("ga4_dataset") or ctx.get("ads_dataset")):
         project = (ctx.get("bq_source_project") or ctx.get("bq_project") or _source_project()).strip().lower()
         ga4_ds = (ctx.get("ga4_dataset") or "").strip().lower()
@@ -336,6 +351,8 @@ def run_bigquery_sql_readonly(
     max_bytes_billed = max_mb * 1024 * 1024
 
     ctx = _get_bq_context(organization_id)
+    if _org_requires_bq_config(organization_id) and (not ctx or not ctx.get("bq_project") or not (ctx.get("marts_dataset") or ctx.get("marts_ads_dataset"))):
+        return {"rows": [], "schema": [], "row_count": 0, "stats": {}, "error": MSG_ORG_DATASETS_NOT_CONFIGURED}
     if ctx and ctx.get("bq_project") and (ctx.get("marts_dataset") or ctx.get("marts_ads_dataset")):
         client = get_client(project=ctx["bq_project"], location=ctx.get("bq_location") or "europe-north2")
     else:
@@ -383,6 +400,8 @@ def list_tables_for_discovery(
     from google.cloud import bigquery
 
     ctx = _get_bq_context(organization_id) if organization_id else None
+    if _org_requires_bq_config(organization_id) and not ctx:
+        return []
     if ctx and ctx.get("bq_project"):
         project = project or ctx["bq_project"]
         if datasets is None:
@@ -392,7 +411,7 @@ def list_tables_for_discovery(
                 if v:
                     datasets.append(v)
         if not datasets:
-            datasets = [get_marts_dataset(), get_marts_ads_dataset(), get_ga4_dataset(), get_ads_dataset()]
+            return []
         default_location = ctx.get("bq_location") or "europe-north2"
         location_ads = ctx.get("bq_location_ads") or "EU"
     else:
@@ -463,10 +482,13 @@ def get_marts_schema_live(organization_id: Optional[str] = None) -> list[dict] |
     """
     Fetch live schema from marts datasets for Copilot.
     When organization_id is set and org has Firestore projects, uses org BQ config; else env.
+    When organization_id is set and org has no config, returns None (no shared env fallback).
     Returns list of {"table_name": str, "column_name": str, "dataset": str} or None on error.
     """
     logger = logging.getLogger(__name__)
     ctx = _get_bq_context(organization_id) if organization_id else None
+    if _org_requires_bq_config(organization_id) and (not ctx or not (ctx.get("marts_dataset") or ctx.get("marts_ads_dataset"))):
+        return None
     if ctx and ctx.get("bq_project"):
         project = ctx["bq_project"]
         marts = (ctx.get("marts_dataset") or "").strip() or get_marts_dataset()

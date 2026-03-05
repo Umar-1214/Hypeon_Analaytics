@@ -191,7 +191,7 @@ _SCHEMA_MAX_CHARS = 55_000
 
 
 def _format_live_marts_schema(rows: list[dict], project: str, marts: str) -> str:
-    """Format live INFORMATION_SCHEMA rows into schema text (hypeon_marts + hypeon_marts_ads)."""
+    """Format live INFORMATION_SCHEMA rows into schema text (marts datasets, dynamic)."""
     from collections import defaultdict
     by_key = defaultdict(list)  # key = (dataset, table_name)
     for r in rows:
@@ -200,10 +200,11 @@ def _format_live_marts_schema(rows: list[dict], project: str, marts: str) -> str
         cn = (r.get("column_name") or "").strip()
         if tn and cn:
             by_key[(ds, tn)].append(cn)
+    datasets = sorted(set(ds for (ds, tn) in by_key.keys())) or [marts]
     parts = [
-        "## Database: BigQuery (read-only). Schema: hypeon_marts (GA4) + hypeon_marts_ads (Ads), live.",
-        f"- Project: {project}. Datasets: hypeon_marts (europe-north2), hypeon_marts_ads (EU).",
-        "- Use backtick-quoted names: `project.dataset.table`. Sessions: hypeon_marts; ad spend: hypeon_marts_ads.",
+        "## Database: BigQuery (read-only). Schema from configured marts datasets, live.",
+        f"- Project: {project}. Datasets: {', '.join(datasets)}.",
+        "- Use backtick-quoted names: `project.dataset.table`. Use only the tables and columns listed below.",
         "",
         "## Tables and columns (INFORMATION_SCHEMA)",
         "",
@@ -235,7 +236,7 @@ def get_schema_for_copilot(use_cache: bool = True) -> str:
         from ..clients.bigquery import get_marts_schema_live
         live_rows = get_marts_schema_live()
         if not live_rows:
-            err = _schema_error_message("Marts schema returned no tables. Ensure hypeon_marts and hypeon_marts_ads exist and have fct_sessions, fct_ad_spend.")
+            err = _schema_error_message("Marts schema returned no tables. Ensure the configured marts datasets exist and contain base tables or views.")
             _SCHEMA_CACHE = err
             return err
         schema_text = _format_live_marts_schema(live_rows, project, marts_ds)
@@ -274,7 +275,7 @@ def get_marts_catalog_for_copilot() -> str:
         if subset:
             project = data.get("bq_project") or get_bq_project()
             hints = (
-                "Prefer marts (fct_sessions, fct_orders, fct_ad_spend, fct_funnel, dim_user_*, etc.). "
+                "Prefer marts tables (sessions, orders, ad spend, funnel, dimensions—use whatever tables exist in the schema). "
                 "Date filters required for event/session tables."
             )
             body = _format_datasets_catalog(subset, project, max_cols=50, max_sample_snippet=500)
@@ -340,33 +341,26 @@ def get_marts_catalog_for_copilot() -> str:
 
 
 def _marts_only_rules(project: str, marts: str, marts_ads: str) -> str:
-    """Rules for Copilot: ONLY fct_sessions and fct_ad_spend. Channel error message."""
+    """Rules for Copilot: schema-agnostic. Use tables/columns from the schema above; no hardcoded table names."""
     return f"""
 
-## Allowed tables only
-- **hypeon_marts.fct_sessions** — event/session/product views (event_name, item_id, utm_source, device).
-- **hypeon_marts_ads.fct_ad_spend** — ad performance (channel, cost, clicks, conversions). Use for campaign/channel questions.
-- Do NOT reference ads_daily_staging, ga4_daily_staging, analytics_cache, decision_store, or raw datasets.
+## Allowed tables
+- Use ONLY the tables and columns listed in the schema/catalog above (from datasets {marts}, {marts_ads} or as discovered).
+- Do NOT reference ads_daily_staging, ga4_daily_staging, analytics_cache, decision_store, or raw datasets unless present in the schema.
 
 ## Query behavior (user intent -> SQL)
-| User intent       | SQL behavior |
-| views / item views| event_name IN ('view_item','view_item_list'), item_id LIKE 'prefix%' in fct_sessions |
-| item views from Google | Same as above + utm_source LIKE '%google%' (or LOWER(utm_source) LIKE '%google%') in fct_sessions |
-| google traffic    | utm_source LIKE '%google%' in fct_sessions |
-| channel / ad spend| Query fct_ad_spend; filter by channel. |
+- **Views / item views**: Use the table(s) that have event_name and item_id; filter event_name IN ('view_item','view_item_list'), item_id LIKE 'prefix%' when those columns exist.
+- **Item views from a source (e.g. Google)**: Same as above and filter by utm_source (or source column) e.g. utm_source LIKE '%google%'.
+- **Channel / ad spend**: Use the table(s) that have channel, cost, clicks, conversions (or similar); filter by channel. Channel values vary by org (e.g. google_ads, meta_ads, pinterest_ads).
 
-## Important: date filter for fct_sessions (required)
-- You MUST add a date filter to every query that uses fct_sessions (item views, traffic, "from Google", etc.). Without it the query may exceed the bytes limit and fail. Use: WHERE event_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 30 DAY) (or INTERVAL 7 DAY for last week). If the table has event_date, use event_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY) instead. Add this filter even when the user does not ask for a date range.
+## Date filter (required for event/session tables)
+- Add a date filter to queries that use event or session tables (e.g. event_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 30 DAY) or event_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)) to avoid exceeding the bytes limit.
 
-## Unavailable channel (e.g. Facebook)
-- If the user asks for a channel (e.g. "views from Facebook", "Facebook traffic") that is NOT in the data:
-  - First check: SELECT DISTINCT channel FROM `{project}.{marts_ads}.fct_ad_spend` (or from schema: channel column).
-  - If the requested channel (e.g. facebook) is not present, respond with exactly:
-    "[Channel] channel data is not currently present in the dataset. Available channels: google_ads. Once [Channel] data is integrated, this query will be supported."
-  - Do NOT mention staging tables, raw tables, or analytics_cache.
+## Unavailable channel
+- If the user asks for a channel that is NOT in the data: run SELECT DISTINCT channel (or equivalent) on the ad/spend table from the schema to get the actual list; then respond with "[Channel] channel data is not currently present. Available channels: [list from your query result]. Once [Channel] data is integrated, this query will be supported."
 
 ## Query guidelines
-- Use only SELECT. Table names: `{project}.{marts}.fct_sessions`, `{project}.{marts_ads}.fct_ad_spend`.
+- Use only SELECT. Use the exact table and column names from the schema above.
 - Filter by date when relevant.
 """
 
@@ -375,6 +369,7 @@ def get_raw_schema_for_copilot(organization_id: Optional[str] = None) -> str:
     """
     Load schema + sample rows for raw datasets (GA4, Ads).
     When organization_id is set, uses org BQ config from Firestore for dataset names; else env.
+    When organization_id is set and org has no config, returns a clear message (no shared env fallback).
     Prefers all_schemas_and_samples.json when present; falls back to raw_copilot_schema.json.
     Capped at _RAW_SCHEMA_MAX_CHARS.
     """
@@ -385,6 +380,9 @@ def get_raw_schema_for_copilot(organization_id: Optional[str] = None) -> str:
             ctx = get_org_bq_context(organization_id)
         except Exception:
             pass
+    o = (organization_id or "").strip()
+    if o and o.lower() != "default" and not ctx:
+        return "Datasets are not configured for your organization. Please ask your administrator to set up BigQuery data sources in your organization settings."
     data = _load_all_schemas_and_samples()
     if data:
         ga4_ds = (ctx.get("ga4_dataset") if ctx else None) or get_ga4_dataset()

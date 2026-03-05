@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """
-POST Copilot questions to the API using Firebase auth (test@hypeon.ai / test@123).
-Run from repo root with backend on port 8000:
-  TEST_USER_EMAIL=test@hypeon.ai TEST_USER_PASSWORD=test@123 python -m backend.scripts.run_copilot_questions_with_auth
+POST Copilot questions to the API using Firebase auth.
+Credentials: test@hypeon.ai / test@123 (default; overridable via env).
+Run from repo root with backend on port 8001:
+  python -m backend.scripts.run_copilot_questions_with_auth
+  # or: TEST_USER_EMAIL=test@hypeon.ai TEST_USER_PASSWORD=test@123 python -m backend.scripts.run_copilot_questions_with_auth
 """
 from __future__ import annotations
 
@@ -79,6 +81,11 @@ def main():
     print(f"Signed in as {EMAIL}. Sending {len(qs)} questions to Copilot...\n")
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     url = f"{BASE}/api/v1/copilot/chat"
+    artifacts_dir = REPO_ROOT / "artifacts"
+    out_file = None
+    if artifacts_dir.is_dir():
+        from datetime import datetime
+        out_file = artifacts_dir / f"copilot_answers_{datetime.now().strftime('%Y%m%d_%H%M')}.txt"
     for i, q in enumerate(qs, 1):
         print(f"--- Q{i}/{len(qs)}: {q[:70]}{'...' if len(q) > 70 else ''}")
         try:
@@ -93,11 +100,24 @@ def main():
             data = out.get("data") or []
             print(f"  Status: {r.status_code} | Rows: {len(data)}")
             print(f"  Answer: {(text[:300] + '...') if len(text) > 300 else text}")
+            if out_file is not None:
+                with open(out_file, "a", encoding="utf-8") as f:
+                    f.write(f"\n\n--- Q{i}: {q}\n\n")
+                    f.write(f"Status: {r.status_code} | Rows: {len(data)}\n\n")
+                    f.write(text + "\n")
         except requests.RequestException as e:
             print(f"  Error: {e}")
+            if out_file is not None:
+                with open(out_file, "a", encoding="utf-8") as f:
+                    f.write(f"\n\n--- Q{i}: {q}\n\nError: {e}\n")
         except Exception as e:
             print(f"  Error: {e}")
+            if out_file is not None:
+                with open(out_file, "a", encoding="utf-8") as f:
+                    f.write(f"\n\n--- Q{i}: {q}\n\nError: {e}\n")
         print()
+    if out_file is not None:
+        print(f"Full answers written to {out_file}")
     print("Done.")
     return 0
 
