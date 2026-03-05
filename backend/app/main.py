@@ -22,6 +22,7 @@ except Exception as _e:
 import json
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from contextlib import asynccontextmanager
 from typing import Any, Optional
 
@@ -42,6 +43,7 @@ from .auth import (
     get_organization_id,
     get_org_projects_flat,
     get_role_from_token as auth_get_role,
+    get_user_id,
     init_firebase,
     parse_org_projects,
 )
@@ -77,6 +79,8 @@ async def lifespan(app: FastAPI):
     import os
     if not os.environ.get("GOOGLE_CLOUD_PROJECT"):
         os.environ["GOOGLE_CLOUD_PROJECT"] = get_bq_project()
+    if not os.environ.get("FIREBASE_PROJECT_ID") and os.environ.get("GOOGLE_CLOUD_PROJECT") == "braided-verve-459208-i6":
+        os.environ["FIREBASE_PROJECT_ID"] = "hypeon-ai-prod"
     try:
         init_firebase()
     except Exception as e:
@@ -563,12 +567,13 @@ def copilot_chat(
 
     try:
         org = get_organization_id(request)
-        logger.info("Copilot chat | org=%s session_id=%s", org, getattr(body, "session_id", None) or "(new)")
+        uid = get_user_id(request)
+        logger.info("Copilot chat | org=%s user_id=%s session_id=%s", org, uid or "(none)", getattr(body, "session_id", None) or "(new)")
         from .copilot.chat_handler import chat
         msg = (getattr(body, "message", None) or "").strip()
         if not msg:
             return _copilot_safe_response({"answer": "Please type a message to get a response.", "data": [], "text": "Please type a message to get a response.", "session_id": sid})
-        out = chat(org, msg, session_id=sid, client_id=getattr(body, "client_id", None))
+        out = chat(org, msg, session_id=sid, client_id=getattr(body, "client_id", None), user_id=uid)
         text = (out.get("text") or out.get("answer") or "").strip()
         if text and ("couldn't complete" in text.lower() or "couldnt complete" in text.lower()):
             fallback = "I'm having trouble right now. Please try again in a moment, or ask something like \"Views count of item FT05B from Google\"."
@@ -590,10 +595,12 @@ def copilot_chat(
         return _copilot_safe_response({**default_fail, "session_id": sid})
 
 
-def _copilot_chat_stream_gen(org: str, message: str, session_id: Optional[str], client_id: Optional[int]):
-    """Yield SSE lines from chat_stream. Each event: data: <json>\\n\\n."""
+def _copilot_chat_stream_gen(
+    org: str, message: str, session_id: Optional[str], client_id: Optional[int], user_id: Optional[str] = None
+):
+    """Yield SSE lines from chat_stream. Each event: data: <json>\\n\\n. user_id scopes sessions to the logged-in user."""
     from .copilot.chat_handler import chat_stream
-    for ev in chat_stream(org, message, session_id=session_id, client_id=client_id):
+    for ev in chat_stream(org, message, session_id=session_id, client_id=client_id, user_id=user_id):
         yield "data: " + json.dumps(ev) + "\n\n"
 
 
@@ -603,13 +610,14 @@ def copilot_chat_stream(
     request: Request,
     _role: str = Depends(require_role("admin", "analyst", "viewer")),
 ):
-    """Stream copilot chat with status phases (analyzing, discovering, generating_sql, running_query, formatting) then done or error."""
+    """Stream copilot chat with status phases (analyzing, discovering, generating_sql, running_query, formatting) then done or error. Sessions scoped by user."""
     org = get_organization_id(request)
+    uid = get_user_id(request)
     msg = (getattr(body, "message", None) or "").strip()
     sid = getattr(body, "session_id", None)
     cid = getattr(body, "client_id", None)
     return StreamingResponse(
-        _copilot_chat_stream_gen(org, msg, sid, cid),
+        _copilot_chat_stream_gen(org, msg, sid, cid, uid),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -621,11 +629,12 @@ def copilot_chat_history(
     session_id: str = Query(..., description="Session to load"),
     _role: str = Depends(require_role("admin", "analyst", "viewer")),
 ):
-    """Return message history for a chat session (for restoring UI after refresh)."""
+    """Return message history for a chat session (for restoring UI after refresh). Scoped by user so they see only their chats."""
     org = get_organization_id(request)
+    uid = get_user_id(request)
     from .copilot.session_memory import get_session_store
     store = get_session_store()
-    messages = store.get_messages(org, session_id)
+    messages = store.get_messages(org, session_id, user_id=uid)
     return {"session_id": session_id, "messages": messages}
 
 
@@ -634,14 +643,15 @@ def copilot_store_info(
     request: Request,
     _role: str = Depends(require_role("admin", "analyst", "viewer")),
 ):
-    """Return which session store is used and current org (for diagnostics). Not required for normal operation."""
+    """Return which session store is used, current org, and user_id (for diagnostics). Sessions are scoped by user."""
     import os
     from .copilot.session_memory import get_session_store
     store = get_session_store()
     kind = "firestore" if type(store).__name__ == "FirestoreSessionStore" else "memory"
     db_id = os.environ.get("FIRESTORE_DATABASE_ID") if kind == "firestore" else None
     org = get_organization_id(request)
-    return {"store": kind, "database_id": db_id, "organization_id": org}
+    uid = get_user_id(request)
+    return {"store": kind, "database_id": db_id, "organization_id": org, "user_id": uid}
 
 
 @app.get("/api/v1/copilot/sessions")
@@ -649,12 +659,19 @@ def copilot_sessions(
     request: Request,
     _role: str = Depends(require_role("admin", "analyst", "viewer")),
 ):
-    """Return list of chat sessions for the org (title, session_id, updated_at) for history UI."""
+    """Return list of chat sessions for the current user (title, session_id, updated_at). User-scoped so they see their chats on re-login."""
     org = get_organization_id(request)
+    uid = get_user_id(request)
     from .copilot.session_memory import get_session_store
     store = get_session_store()
-    sessions = store.get_sessions(org)
-    logger.info("Copilot GET /sessions org=%s count=%d", org, len(sessions))
+    try:
+        with ThreadPoolExecutor(max_workers=1) as ex:
+            fut = ex.submit(store.get_sessions, org, uid)
+            sessions = fut.result(timeout=10)
+    except FuturesTimeoutError:
+        logger.warning("Copilot GET /sessions timed out for org=%s user_id=%s", org, uid or "(none)")
+        sessions = []
+    logger.info("Copilot GET /sessions org=%s user_id=%s count=%d", org, uid or "(none)", len(sessions))
     return {"sessions": sessions}
 
 

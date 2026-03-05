@@ -32,6 +32,7 @@ def init_firebase() -> None:
             or os.environ.get("GOOGLE_CLOUD_PROJECT")
             or os.environ.get("BQ_PROJECT", "")
         )
+        project_id = (project_id or "").strip() or "hypeon-ai-prod"
         if cred_path and os.path.isfile(cred_path):
             _firebase_app = firebase_admin.initialize_app(credentials.Certificate(cred_path))
         else:

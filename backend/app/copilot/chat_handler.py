@@ -277,16 +277,66 @@ def _fallback_answer(rows: list, sql_used: str) -> str:
     return "\n".join(lines)
 
 
+def _format_answer_stream(
+    message: str, sql_used: str, rows: list, from_raw: bool = False
+) -> Generator[str, None, None]:
+    """Yield formatted answer chunks from LLM stream. Uses same prompt as _format_answer. Falls back to full text if streaming unavailable."""
+    try:
+        from ..llm_claude import is_claude_configured, stream_claude
+        from ..llm_gemini import is_gemini_configured, stream_gemini
+    except Exception:
+        yield _fallback_answer(rows, sql_used)
+        return
+    preview_rows = rows[:50] if len(rows) > 30 else rows[:20]
+    data_preview = json.dumps(preview_rows, default=str)[:6000]
+    extra = " (Data from raw fallback.)" if from_raw else ""
+    zero_row_note = ""
+    if len(rows) == 0:
+        zero_row_note = " The query returned 0 rows. State that no data matches; suggest widening the time window or relaxing filters if relevant."
+    large_set_note = ""
+    if len(rows) > 30:
+        large_set_note = f" The result has {len(rows)} rows. Output a concise summary with clear sections (##) and at most 1–2 small markdown tables (max 10–15 rows each). Do not list every row."
+    user_content = (
+        f"User question: {message}\n\n"
+        f"SQL used: {sql_used}\n\n"
+        f"Result ({len(rows)} rows): {data_preview}\n\n"
+        f"Format the above into a clear, well-formatted answer. Use markdown tables with proper newlines between header, separator, and rows. Use ## for sections. Do not invent data.{large_set_note}{zero_row_note}{extra}"
+    )
+    combined_prompt = f"{_FORMAT_SYSTEM}\n\n---\n\n{user_content}"
+    if is_claude_configured():
+        try:
+            for chunk in stream_claude(combined_prompt):
+                if chunk:
+                    yield chunk
+            return
+        except Exception:
+            if is_gemini_configured():
+                for chunk in stream_gemini(combined_prompt):
+                    if chunk:
+                        yield chunk
+                return
+    if is_gemini_configured():
+        try:
+            for chunk in stream_gemini(combined_prompt):
+                if chunk:
+                    yield chunk
+            return
+        except Exception:
+            pass
+    yield _fallback_answer(rows, sql_used)
+
+
 def chat(
     organization_id: str,
     message: str,
     *,
     session_id: Optional[str] = None,
     client_id: Optional[int] = None,
+    user_id: Optional[str] = None,
 ) -> dict[str, Any]:
     """
     One turn: discover tables → LLM generates SQL from schema + guide → run → validate → format. Retry on empty/error.
-    Returns { answer, data, text, session_id }. Never raises.
+    Returns { answer, data, text, session_id }. user_id scopes session to the logged-in user for history.
     """
     try:
         from .session_memory import get_session_store
@@ -313,8 +363,8 @@ def chat(
 
     if _is_simple_greeting(message):
         reply = "Hi! I can help with marketing analytics. Ask about revenue, top products, channels, ROAS, sessions, conversions, or any metric we have in the warehouse."
-        store.append(organization_id, sid, "user", message)
-        store.append(organization_id, sid, "assistant", reply, meta=None)
+        store.append(organization_id, sid, "user", message, meta=None, user_id=user_id)
+        store.append(organization_id, sid, "assistant", reply, meta=None, user_id=user_id)
         return {"answer": reply, "data": [], "text": reply, "session_id": sid}
 
     # When org has no BQ config, do not use shared env; tell user to configure datasets. ("default" org may use env.)
@@ -324,8 +374,8 @@ def chat(
             from ..auth.firestore_user import get_org_bq_context
             if get_org_bq_context(organization_id) is None:
                 from ..clients.bigquery import MSG_ORG_DATASETS_NOT_CONFIGURED
-                store.append(organization_id, sid, "user", message)
-                store.append(organization_id, sid, "assistant", MSG_ORG_DATASETS_NOT_CONFIGURED, meta=None)
+                store.append(organization_id, sid, "user", message, meta=None, user_id=user_id)
+                store.append(organization_id, sid, "assistant", MSG_ORG_DATASETS_NOT_CONFIGURED, meta=None, user_id=user_id)
                 return {"answer": MSG_ORG_DATASETS_NOT_CONFIGURED, "data": [], "text": MSG_ORG_DATASETS_NOT_CONFIGURED, "session_id": sid}
         except Exception:
             pass
@@ -343,8 +393,8 @@ def chat(
             "I couldn't find any tables in the warehouse for that question. "
             "Check that BigQuery discovery is configured (project and datasets) and try again."
         )
-        store.append(organization_id, sid, "user", message)
-        store.append(organization_id, sid, "assistant", final_text, meta=None)
+        store.append(organization_id, sid, "user", message, meta=None, user_id=user_id)
+        store.append(organization_id, sid, "assistant", final_text, meta=None, user_id=user_id)
         return {"answer": final_text, "data": [], "text": final_text, "session_id": sid}
 
     valid_result = None
@@ -399,8 +449,8 @@ def chat(
             execution_time_ms,
         )
         final_text = _format_answer(message, sql_used, rows, organization_id, sid)
-        store.append(organization_id, sid, "user", message)
-        store.append(organization_id, sid, "assistant", final_text, meta=None)
+        store.append(organization_id, sid, "user", message, meta=None, user_id=user_id)
+        store.append(organization_id, sid, "assistant", final_text, meta=None, user_id=user_id)
         return {"answer": final_text, "data": rows, "text": final_text, "session_id": sid}
 
     # Explicit raw fallback: try one query against GA4/Ads raw when marts returned no valid result
@@ -410,8 +460,8 @@ def chat(
             raw_rows, raw_sql = raw_result
             logger.info("Copilot raw fallback success | row_count=%d", len(raw_rows))
             final_text = _format_answer(message, raw_sql, raw_rows, organization_id, sid, from_raw=True)
-            store.append(organization_id, sid, "user", message)
-            store.append(organization_id, sid, "assistant", final_text, meta=None)
+            store.append(organization_id, sid, "user", message, meta=None, user_id=user_id)
+            store.append(organization_id, sid, "assistant", final_text, meta=None, user_id=user_id)
             return {"answer": final_text, "data": raw_rows, "text": final_text, "session_id": sid}
 
     copilot_metrics.increment("copilot.query_empty_results_total")
@@ -422,8 +472,8 @@ def chat(
         f"I couldn't find relevant data for that question. Queries tried: {tables_msg}. "
         "Try rephrasing or ask about a different metric (e.g. revenue by product, top channels, ROAS)."
     )
-    store.append(organization_id, sid, "user", message)
-    store.append(organization_id, sid, "assistant", final_text, meta=None)
+    store.append(organization_id, sid, "user", message, meta=None, user_id=user_id)
+    store.append(organization_id, sid, "assistant", final_text, meta=None, user_id=user_id)
     return {"answer": final_text, "data": [], "text": final_text, "session_id": sid}
 
 
@@ -446,6 +496,7 @@ def chat_stream(
     *,
     session_id: Optional[str] = None,
     client_id: Optional[int] = None,
+    user_id: Optional[str] = None,
 ) -> Generator[dict[str, Any], None, None]:
     """
     Same flow as chat() but yields SSE-style events: phase (status) then done or error.
@@ -480,8 +531,8 @@ def chat_stream(
 
     if _is_simple_greeting(message):
         reply = "Hi! I can help with marketing analytics. Ask about revenue, top products, channels, ROAS, sessions, conversions, or any metric we have in the warehouse."
-        store.append(organization_id, sid, "user", message)
-        store.append(organization_id, sid, "assistant", reply, meta=None)
+        store.append(organization_id, sid, "user", message, meta=None, user_id=user_id)
+        store.append(organization_id, sid, "assistant", reply, meta=None, user_id=user_id)
         yield {"phase": "done", "answer": reply, "data": [], "session_id": sid}
         return
 
@@ -492,8 +543,8 @@ def chat_stream(
             from ..auth.firestore_user import get_org_bq_context
             if get_org_bq_context(organization_id) is None:
                 from ..clients.bigquery import MSG_ORG_DATASETS_NOT_CONFIGURED
-                store.append(organization_id, sid, "user", message)
-                store.append(organization_id, sid, "assistant", MSG_ORG_DATASETS_NOT_CONFIGURED, meta=None)
+                store.append(organization_id, sid, "user", message, meta=None, user_id=user_id)
+                store.append(organization_id, sid, "assistant", MSG_ORG_DATASETS_NOT_CONFIGURED, meta=None, user_id=user_id)
                 yield {"phase": "done", "answer": MSG_ORG_DATASETS_NOT_CONFIGURED, "data": [], "session_id": sid}
                 return
         except Exception:
@@ -514,8 +565,8 @@ def chat_stream(
                 "I couldn't find any tables in the warehouse for that question. "
                 "Check that BigQuery discovery is configured (project and datasets) and try again."
             )
-            store.append(organization_id, sid, "user", message)
-            store.append(organization_id, sid, "assistant", final_text, meta=None)
+            store.append(organization_id, sid, "user", message, meta=None, user_id=user_id)
+            store.append(organization_id, sid, "assistant", final_text, meta=None, user_id=user_id)
             yield {"phase": "done", "answer": final_text, "data": [], "session_id": sid}
             return
 
@@ -564,9 +615,13 @@ def chat_stream(
         if valid_result is not None and sql_used:
             rows = valid_result.get("rows") or []
             yield {"phase": "formatting", "message": "Formatting results…"}
-            final_text = _format_answer(message, sql_used, rows, organization_id, sid)
-            store.append(organization_id, sid, "user", message)
-            store.append(organization_id, sid, "assistant", final_text, meta=None)
+            accumulated: List[str] = []
+            for chunk in _format_answer_stream(message, sql_used, rows, from_raw=False):
+                accumulated.append(chunk)
+                yield {"phase": "answer_chunk", "chunk": chunk}
+            final_text = "".join(accumulated)
+            store.append(organization_id, sid, "user", message, meta=None, user_id=user_id)
+            store.append(organization_id, sid, "assistant", final_text, meta=None, user_id=user_id)
             yield {"phase": "done", "answer": final_text, "data": _serialize_data_for_sse(rows), "session_id": sid}
             return
 
@@ -577,9 +632,13 @@ def chat_stream(
                 raw_rows, raw_sql = raw_result
                 logger.info("Copilot raw fallback success | row_count=%d", len(raw_rows))
                 yield {"phase": "formatting", "message": "Formatting results…"}
-                final_text = _format_answer(message, raw_sql, raw_rows, organization_id, sid, from_raw=True)
-                store.append(organization_id, sid, "user", message)
-                store.append(organization_id, sid, "assistant", final_text, meta=None)
+                accumulated: List[str] = []
+                for chunk in _format_answer_stream(message, raw_sql, raw_rows, from_raw=True):
+                    accumulated.append(chunk)
+                    yield {"phase": "answer_chunk", "chunk": chunk}
+                final_text = "".join(accumulated)
+                store.append(organization_id, sid, "user", message, meta=None, user_id=user_id)
+                store.append(organization_id, sid, "assistant", final_text, meta=None, user_id=user_id)
                 yield {"phase": "done", "answer": final_text, "data": _serialize_data_for_sse(raw_rows), "session_id": sid}
                 return
 
@@ -590,8 +649,8 @@ def chat_stream(
             f"I couldn't find relevant data for that question. Queries tried: {tables_msg}. "
             "Try rephrasing or ask about a different metric (e.g. revenue by product, top channels, ROAS)."
         )
-        store.append(organization_id, sid, "user", message)
-        store.append(organization_id, sid, "assistant", final_text, meta=None)
+        store.append(organization_id, sid, "user", message, meta=None, user_id=user_id)
+        store.append(organization_id, sid, "assistant", final_text, meta=None, user_id=user_id)
         yield {"phase": "done", "answer": final_text, "data": [], "session_id": sid}
     except Exception as e:
         logger.exception("Copilot stream failed")

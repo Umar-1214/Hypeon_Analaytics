@@ -167,6 +167,13 @@ export async function fetchCopilotSessions() {
   return res.json()
 }
 
+/** Diagnostic: which session store is used (firestore vs memory) and current org. Used to explain why old chats may not appear. */
+export async function fetchCopilotStoreInfo() {
+  const res = await fetch(`${apiBase()}/api/v1/copilot/store-info`, { headers: await getAuthHeaders() })
+  if (!res.ok) return null
+  return res.json()
+}
+
 // ----- Existing -----
 export async function fetchInsights(params = {}) {
   const sp = new URLSearchParams()

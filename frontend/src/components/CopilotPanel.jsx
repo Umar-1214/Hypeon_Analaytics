@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { copilotChat, copilotChatHistory, fetchCopilotSessions } from '../api'
 import { useUserOrg } from '../contexts/UserOrgContext'
 import DynamicDashboardRenderer from './DynamicDashboardRenderer'
@@ -219,8 +220,8 @@ export default function CopilotPanel({ open, onClose, initialQuery = '', explain
               ) : (
                 <>
                   {msg.text ? (
-                    <div className="prose prose-sm max-w-none text-slate-700 prose-p:my-1 prose-ul:my-1 prose-li:my-0">
-                      <ReactMarkdown>{msg.text}</ReactMarkdown>
+                    <div className="prose prose-sm max-w-none text-slate-700 prose-p:my-1 prose-ul:my-1 prose-li:my-0 prose-table:border-collapse prose-table:w-full prose-th:bg-slate-100 prose-td:border-b prose-td:border-slate-200">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.text}</ReactMarkdown>
                     </div>
                   ) : null}
                   {msg.layout?.widgets?.length > 0 && (

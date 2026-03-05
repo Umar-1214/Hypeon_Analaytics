@@ -60,8 +60,8 @@ class FirestoreSessionStore:
     """
     Persists copilot sessions and messages in Firestore.
     Collection: copilot_sessions. Document ID = session_id.
-    Fields: organization_id, title, updated_at, context_summary?, messages (array of {role, content, meta?}).
-    Requires composite index: organization_id (asc), updated_at (desc) for get_sessions.
+    Fields: organization_id, user_id (Firebase uid for per-user sessions), title, updated_at, context_summary?, messages.
+    When user_id is set, list/history are scoped to that user so they see their chats when they log in again.
     """
 
     def __init__(self):
@@ -83,11 +83,14 @@ class FirestoreSessionStore:
         role: str,
         content: str,
         meta: Optional[dict] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         db = self._get_db()
         if not db:
+            logger.warning("FirestoreSessionStore.append: no db (Firestore client unavailable), session not persisted")
             return
         org = organization_id or "default"
+        uid = (user_id or "").strip() or None
         now = time.time()
         title = None
         if role == "user" and content:
@@ -97,15 +100,22 @@ class FirestoreSessionStore:
             doc = ref.get()
             msg = _message_to_dict(role, content, meta)
             if not doc.exists:
-                ref.set({
+                payload: dict[str, Any] = {
                     "organization_id": org,
                     "title": title or "New chat",
                     "updated_at": now,
                     "messages": [msg],
-                })
+                }
+                if uid:
+                    payload["user_id"] = uid
+                ref.set(payload)
+                logger.info("FirestoreSessionStore.append: created session %s org=%s", session_id[:16], org)
             else:
                 data = doc.to_dict() or {}
                 if (data.get("organization_id") or "default") != org:
+                    return
+                doc_uid = data.get("user_id") or ""
+                if doc_uid and doc_uid != (uid or ""):
                     return
                 messages = list(data.get("messages") or [])
                 messages.append(msg)
@@ -116,11 +126,15 @@ class FirestoreSessionStore:
                 }
                 if title and (not data.get("title") or not str(data.get("title", "")).strip()):
                     update["title"] = title
+                if uid and not doc_uid:
+                    update["user_id"] = uid
                 ref.update(update)
         except Exception as e:
             logger.warning("FirestoreSessionStore.append failed: %s", e, exc_info=True)
 
-    def get_messages(self, organization_id: str, session_id: str) -> list[dict]:
+    def get_messages(
+        self, organization_id: str, session_id: str, user_id: Optional[str] = None
+    ) -> list[dict]:
         db = self._get_db()
         if not db:
             return []
@@ -131,6 +145,9 @@ class FirestoreSessionStore:
                 return []
             data = doc.to_dict() or {}
             if (data.get("organization_id") or "default") != (organization_id or "default"):
+                return []
+            doc_uid = data.get("user_id") or ""
+            if user_id and doc_uid and doc_uid != user_id:
                 return []
             messages = data.get("messages") or []
             # Return last N in chronological order; merge meta into each message to match in-memory API
@@ -147,12 +164,15 @@ class FirestoreSessionStore:
             logger.warning("FirestoreSessionStore.get_messages failed: %s", e)
             return []
 
-    def get_sessions(self, organization_id: str) -> list[dict]:
-        """Sessions for the org, sorted by updated_at desc, capped at MAX_SESSIONS_LIST. No composite index required (sort in memory)."""
+    def get_sessions(
+        self, organization_id: str, user_id: Optional[str] = None
+    ) -> list[dict]:
+        """Sessions for the org (and user when user_id set), sorted by updated_at desc. Per-user so same user sees their chats on re-login."""
         db = self._get_db()
         if not db:
             return []
         org = organization_id or "default"
+        uid = (user_id or "").strip() or None
         try:
             q = (
                 db.collection(COPLIOT_SESSIONS_COLLECTION)
@@ -160,8 +180,17 @@ class FirestoreSessionStore:
                 .limit(MAX_SESSIONS_LIST + 50)
             )
             out = []
-            for doc in q.stream():
+            docs_list = list(q.stream())
+            logger.info("FirestoreSessionStore.get_sessions: org=%s user_id=%s query_count=%d", org, uid or "(none)", len(docs_list))
+            for doc in docs_list:
                 d = doc.to_dict() or {}
+                doc_uid = d.get("user_id") or ""
+                if uid:
+                    if doc_uid and doc_uid != uid:
+                        continue
+                else:
+                    if doc_uid:
+                        continue
                 out.append({
                     "session_id": doc.id,
                     "title": d.get("title") or "New chat",
@@ -237,15 +266,25 @@ class SessionMemoryStore:
             self._order.append(key)
         return self._store[key]
 
-    def append(self, organization_id: str, session_id: str, role: str, content: str, meta: Optional[dict] = None) -> None:
+    def append(
+        self,
+        organization_id: str,
+        session_id: str,
+        role: str,
+        content: str,
+        meta: Optional[dict] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
         self.get_or_create_session(organization_id, session_id).append(role, content, meta)
 
-    def get_messages(self, organization_id: str, session_id: str) -> list[dict]:
+    def get_messages(
+        self, organization_id: str, session_id: str, user_id: Optional[str] = None
+    ) -> list[dict]:
         state = self._store.get(self._key(organization_id, session_id))
         return state.get_messages() if state else []
 
-    def get_sessions(self, organization_id: str) -> list[dict]:
-        """Return sessions for the org as [{ session_id, title, updated_at }], sorted by updated_at desc, capped at MAX_SESSIONS_LIST."""
+    def get_sessions(self, organization_id: str, user_id: Optional[str] = None) -> list[dict]:
+        """Return sessions for the org as [{ session_id, title, updated_at }], sorted by updated_at desc. In-memory store is org-scoped only."""
         org = organization_id or "default"
         out = []
         for (o, sid), state in self._store.items():

@@ -13,7 +13,7 @@ from .firestore_user import (
     get_user,
     parse_org_projects,
 )
-from .request_auth import get_organization_id, get_role_from_token, require_any_auth
+from .request_auth import get_organization_id, get_role_from_token, get_user_id, require_any_auth
 
 __all__ = [
     "get_bq_config_for_client",
@@ -25,6 +25,7 @@ __all__ = [
     "parse_org_projects",
     "get_organization_id",
     "get_role_from_token",
+    "get_user_id",
     "require_any_auth",
     "verify_id_token",
 ]

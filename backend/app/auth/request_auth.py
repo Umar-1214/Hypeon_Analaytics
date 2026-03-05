@@ -57,8 +57,10 @@ def _get_firebase_context(request: Request) -> Tuple[Optional[str], Optional[dic
     if not decoded:
         return None, None
 
-    uid = decoded.get("uid")
+    uid = decoded.get("uid") or decoded.get("user_id") or decoded.get("sub")
     if not uid:
+        import logging
+        logging.getLogger(__name__).debug("Firebase token decoded but no uid/user_id; keys=%s", list(decoded.keys()))
         return None, None
 
     user = get_user(uid)
@@ -80,6 +82,15 @@ def get_organization_id(request: Request) -> str:
         or request.headers.get("X-Org-Id")
         or "default"
     )
+
+
+def get_user_id(request: Request) -> Optional[str]:
+    """
+    When Bearer token is present and valid, return Firebase uid from the token.
+    Used to scope Copilot sessions per user so the same user sees their chats when they log in again.
+    """
+    uid, _ = _get_firebase_context(request)
+    return uid
 
 
 def get_role_from_token(request: Request, get_api_key_fn=None) -> str:

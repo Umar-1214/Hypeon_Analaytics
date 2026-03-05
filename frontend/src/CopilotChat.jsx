@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
-import { copilotChatStream, copilotChatHistory, fetchCopilotSessions } from './api'
+import remarkGfm from 'remark-gfm'
+import { copilotChatStream, copilotChatHistory, fetchCopilotSessions, fetchCopilotStoreInfo } from './api'
 import { useUserOrg } from './contexts/UserOrgContext'
 
 const COPILOT_SESSION_KEY = 'hypeon_copilot_session_id'
@@ -87,9 +88,12 @@ export default function CopilotChat() {
   const messagesEndRef = useRef(null)
   const listEndRef = useRef(null)
   const inputRef = useRef(null)
+  const streamingTextRef = useRef('')
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
   const [model, setModel] = useState('basic')
+  const [storeInfo, setStoreInfo] = useState(null)
+  const [sessionsError, setSessionsError] = useState(null)
 
   const scrollToBottom = () => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
 
@@ -98,12 +102,20 @@ export default function CopilotChat() {
   }, [messages, loading])
 
   const loadSessions = () => {
+    setSessionsError(null)
     fetchCopilotSessions()
-      .then((r) => setSessions(r.sessions || []))
-      .catch(() => setSessions([]))
+      .then((r) => {
+        setSessions(r.sessions || [])
+        setSessionsError(null)
+      })
+      .catch((err) => {
+        setSessions([])
+        setSessionsError(err?.message || 'Could not load chat history')
+      })
   }
 
   useEffect(() => {
+    fetchCopilotStoreInfo().then((info) => info && setStoreInfo(info)).catch(() => {})
     loadSessions()
   }, [])
 
@@ -179,11 +191,22 @@ export default function CopilotChat() {
     setMessages((prev) => [...prev, { role: 'user', text }])
     setLoading(true)
     if (streamRef.current?.cancel) streamRef.current.cancel()
+    streamingTextRef.current = ''
     const { promise, cancel } = copilotChatStream(
       { message: text, session_id: sessionIdRef.current || undefined, client_id: selectedClientId },
       (ev) => {
         if (ev.phase === 'analyzing' || ev.phase === 'discovering' || ev.phase === 'generating_sql' || ev.phase === 'running_query' || ev.phase === 'formatting') {
           setStreamStatus(ev.message || 'Processing…')
+        } else if (ev.phase === 'answer_chunk' && ev.chunk) {
+          streamingTextRef.current += ev.chunk
+          setStreamStatus(null) // clear "Formatting results…" so user sees answer streaming
+          setMessages((prev) => {
+            const last = prev[prev.length - 1]
+            if (last?.role === 'assistant' && last?.streaming) {
+              return [...prev.slice(0, -1), { ...last, text: streamingTextRef.current }]
+            }
+            return [...prev, { role: 'assistant', text: streamingTextRef.current, streaming: true }]
+          })
         } else if (ev.phase === 'done') {
           if (ev.session_id) {
             sessionIdRef.current = ev.session_id
@@ -191,10 +214,14 @@ export default function CopilotChat() {
             sessionStorage.setItem(COPILOT_SESSION_KEY, ev.session_id)
             loadSessions()
           }
-          setMessages((prev) => [
-            ...prev,
-            { role: 'assistant', text: ev.answer || '', data: ev.data || null },
-          ])
+          setMessages((prev) => {
+            const last = prev[prev.length - 1]
+            const finalText = ev.answer ?? streamingTextRef.current ?? ''
+            if (last?.role === 'assistant' && last?.streaming) {
+              return [...prev.slice(0, -1), { role: 'assistant', text: finalText, data: ev.data || null }]
+            }
+            return [...prev, { role: 'assistant', text: finalText, data: ev.data || null }]
+          })
           setStreamStatus(null)
           setLoading(false)
         } else if (ev.phase === 'error') {
@@ -318,9 +345,19 @@ export default function CopilotChat() {
           {sidebarOpen && (
             <>
               <p className="sectionTitle">YOUR CHATS</p>
-              {filteredSessions.length === 0 ? (
+              {storeInfo?.store === 'memory' && (
+                <p className="px-2 py-1 text-xs text-amber-600 dark:text-amber-400" title="Backend is using in-memory store; history is lost on restart. Configure Firestore for persistent chat history.">
+                  History not saved (in-memory)
+                </p>
+              )}
+              {sessionsError && (
+                <p className="px-2 py-1 text-xs text-red-600 dark:text-red-400" title={sessionsError}>
+                  {sessionsError}
+                </p>
+              )}
+              {filteredSessions.length === 0 && !sessionsError ? (
                 <p className="px-2 py-1.5 text-xs text-slate-500 italic">No recent chats</p>
-              ) : (
+              ) : filteredSessions.length > 0 ? (
                 <ul className="list">
                   {filteredSessions.map((s) => (
                     <li key={s.session_id}>
@@ -339,7 +376,7 @@ export default function CopilotChat() {
                     </li>
                   ))}
                 </ul>
-              )}
+              ) : null}
             </>
           )}
         </div>
@@ -432,8 +469,8 @@ export default function CopilotChat() {
                   ) : (
                     <>
                       {msg.text ? (
-                        <div className="prose prose-sm max-w-none text-slate-700 prose-p:my-1 prose-ul:my-1 prose-li:my-0">
-                          <ReactMarkdown>{msg.text}</ReactMarkdown>
+                        <div className="prose prose-sm max-w-none text-slate-700 prose-p:my-1 prose-ul:my-1 prose-li:my-0 prose-table:border-collapse prose-table:w-full prose-th:bg-slate-100 prose-td:border-b prose-td:border-slate-200">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.text}</ReactMarkdown>
                         </div>
                       ) : null}
                       {msg.data && Array.isArray(msg.data) && msg.data.length > 0 && (
